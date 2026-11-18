@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { VodCard } from '@/components/VodCard'
 import { Icon } from '@/components/icons'
 import { mergeResults, useApp } from '@/store/useApp'
-import { normalizeName } from '@/utils/normalize'
+import { buildDedupeKey } from '@core/dedupe/normalize'
 import type { CategoryBucket } from '@shared/types'
 
 export function Search(): JSX.Element {
@@ -101,7 +101,7 @@ export function Search(): JSX.Element {
       order.seq = 0
     }
     for (const v of merged) {
-      const k = normalizeName(v.vod_name)
+      const k = buildDedupeKey(v)
       if (!order.map.has(k)) order.map.set(k, order.seq++)
     }
   }, [merged, orderKey, browse.page])

@@ -40,7 +40,7 @@ export function Home(): JSX.Element {
   return (
     <div className="page">
       <div className="hero">
-        <h1 className="hero-title">TVBox Desktop</h1>
+        <h1 className="hero-title">蜡笔小新</h1>
         <p className="hero-sub">
           纯白极简的 Windows 影视聚合客户端 · 配置订阅 · 分类浏览 · 多线路选集播放 · 电视直播。
           当前 <b>M1 到 M4 都已完成</b>：配置源与影视源管理、聚合搜索与分类浏览、详情选集、

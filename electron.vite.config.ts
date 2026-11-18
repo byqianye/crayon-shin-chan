@@ -18,7 +18,10 @@ export default defineConfig({
       }
     },
     resolve: {
-      alias: { '@shared': resolve(__dirname, 'src/shared') }
+      alias: {
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@core': resolve(__dirname, 'src/core')
+      }
     }
   },
   preload: {
@@ -29,7 +32,10 @@ export default defineConfig({
       }
     },
     resolve: {
-      alias: { '@shared': resolve(__dirname, 'src/shared') }
+      alias: {
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@core': resolve(__dirname, 'src/core')
+      }
     }
   },
   renderer: {
@@ -37,7 +43,8 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),
-        '@shared': resolve(__dirname, 'src/shared')
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@core': resolve(__dirname, 'src/core')
       }
     },
     plugins: [react()],

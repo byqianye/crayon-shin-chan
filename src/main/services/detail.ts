@@ -6,6 +6,7 @@ import { asArray, buildCmsUrl, isCmsOk } from './cms'
 import { fetchText, parseLooseJson } from './http'
 import { cmsItemToVod } from './search'
 import { extract, selectAll } from './htmlRules'
+import { recordSiteResult } from './health'
 import { getSettings } from './settings'
 import { getSite, resolveHeader } from './sites'
 
@@ -148,7 +149,19 @@ export async function getVodDetail(siteKey: string, vodId: string): Promise<VodD
   if (site.unsupported) throw new Error(site.unsupported)
   if (!vodId) throw new Error('缺少影片 id')
 
-  if (site.type === 3 || site.type === 4) return detailCms(site, vodId)
-  if (site.type === 1) return detailHtml(site, vodId)
-  throw new Error(site.unsupported ?? '该类型暂不支持获取详情')
+  const started = Date.now()
+  try {
+    const detail =
+      site.type === 3 || site.type === 4
+        ? await detailCms(site, vodId)
+        : site.type === 1
+          ? await detailHtml(site, vodId)
+          : null
+    if (!detail) throw new Error(site.unsupported ?? '该类型暂不支持获取详情')
+    await recordSiteResult(site.key, true, Date.now() - started)
+    return detail
+  } catch (err) {
+    await recordSiteResult(site.key, false, Date.now() - started)
+    throw err
+  }
 }

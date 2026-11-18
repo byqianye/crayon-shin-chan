@@ -1,7 +1,10 @@
 import * as cheerio from 'cheerio'
 import type { Site, TestResult } from '@shared/types'
+import { normalizeSourceUrl } from '@shared/url'
 import { buildCmsUrl, isCmsOk } from './cms'
 import { fetchText, matchHeaderRules } from './http'
+import { listLocalSites, localToSite } from './localSites'
+import { listTombstones } from './tombstones'
 import { getSettings } from './settings'
 import { getParsed, listSources } from './sources'
 import { readStore, writeStore } from './store'
@@ -29,32 +32,42 @@ async function writeOverrides(map: OverrideMap): Promise<void> {
 }
 
 /**
- * 汇总所有启用配置源的站点。
- * 去重规则：同名 key 以「配置源列表顺序在前」的为准（后面的源不覆盖前面的）。
+ * 汇总所有启用站点：手动添加的源优先，然后是各配置源解析出的站点。
+ * 去重规则：同 key 或同接口地址只保留第一条（手动源在配置源之前）；
+ * 被用户忽略（墓碑）的站点直接跳过。
  */
 export async function getSites(): Promise<Site[]> {
   const sources = await listSources()
+  const localSites = await listLocalSites()
+  const tombstones = await listTombstones()
   const overrides = await readOverrides()
-  const seen = new Set<string>()
+  const ignored = new Set(tombstones.siteKeys)
+  const seenKeys = new Set<string>()
+  const manualApis = new Set<string>()
   const out: Site[] = []
+
+  const push = (input: Site): void => {
+    if (ignored.has(input.key) || seenKeys.has(input.key)) return
+    seenKeys.add(input.key)
+    out.push(input)
+  }
+
+  for (const local of localSites) {
+    if (!local.enabled) continue
+    push(applyOverride(localToSite(local), overrides))
+    const apiKey = normalizeSourceUrl(local.api)
+    if (apiKey) manualApis.add(apiKey)
+  }
 
   for (const source of sources) {
     if (!source.enabled) continue
     const parsed = getParsed(source.id)
     if (!parsed) continue
     for (const site of parsed.sites) {
-      if (seen.has(site.key)) continue
-      seen.add(site.key)
-      const ov = overrides[site.key]
-      const merged: Site = { ...site }
-      if (ov) {
-        if (ov.enabled !== undefined) merged.enabled = ov.enabled
-        if (ov.name) merged.name = ov.name
-        if (ov.timeout) merged.timeout = ov.timeout
-        if (ov.header) merged.header = { ...merged.header, ...ov.header }
-        if (ov.health !== undefined) merged.health = ov.health
-      }
-      out.push(merged)
+      // 只在「手动源 vs 配置源」之间按接口地址去重；配置源内部同 API 的
+      // 不同站点（例如同一搜索页配两套规则）仍然都要保留。
+      if (manualApis.has(normalizeSourceUrl(site.api))) continue
+      push(applyOverride({ ...site, origin: 'config' }, overrides))
     }
   }
 
@@ -65,6 +78,18 @@ export async function getSites(): Promise<Site[]> {
     return a.name.localeCompare(b.name, 'zh-Hans-CN')
   })
   return out
+}
+
+function applyOverride(base: Site, overrides: OverrideMap): Site {
+  const ov = overrides[base.key]
+  if (!ov) return base
+  const merged: Site = { ...base }
+  if (ov.enabled !== undefined) merged.enabled = ov.enabled
+  if (ov.name) merged.name = ov.name
+  if (ov.timeout) merged.timeout = ov.timeout
+  if (ov.header) merged.header = { ...merged.header, ...ov.header }
+  if (ov.health !== undefined) merged.health = ov.health
+  return merged
 }
 
 export async function getSite(key: string): Promise<Site | undefined> {

@@ -3,8 +3,10 @@ import type { SearchOptions, SearchResponse, Site, SiteSearchResult, Vod } from 
 import { asArray, buildCmsUrl, isCmsOk } from './cms'
 import { fetchText, parseLooseJson } from './http'
 import { absolutize, extract } from './htmlRules'
+import { getHealthMap, recordSiteResult } from './health'
 import { getSettings } from './settings'
 import { getSites, resolveHeader } from './sites'
+import { isCoolingDown } from '@core/health/score'
 
 const DEFAULT_LIMIT = 30
 
@@ -119,6 +121,7 @@ export async function searchSite(
       return fail(site, site.unsupported ?? '该类型暂不支持搜索')
     }
     const ms = Date.now() - start
+    await recordSiteResult(site.key, true, ms)
     return {
       siteKey: site.key,
       siteName: site.name,
@@ -128,7 +131,9 @@ export async function searchSite(
       list
     }
   } catch (err) {
-    return fail(site, (err as Error).message, Date.now() - start)
+    const ms = Date.now() - start
+    await recordSiteResult(site.key, false, ms)
+    return fail(site, (err as Error).message, ms)
   }
 }
 
@@ -161,6 +166,7 @@ export async function searchAll(
   onStart?.(targets.length)
 
   const settings = await getSettings()
+  const healthMap = await getHealthMap()
   const concurrency = Math.max(
     1,
     Math.min(32, options.concurrency ?? settings.concurrency ?? 8)
@@ -176,13 +182,24 @@ export async function searchAll(
       if (token !== currentToken) return
       const index = cursor++
       if (index >= targets.length) return
-      const result = await searchSite(targets[index], keyword, limit)
+      const site = targets[index]
+      // 连续失败的站点先不浪费并发：直接给一条明确的失败结果，
+      // 等冷却结束（10 分钟）后自动恢复。
+      const result = isCoolingDown(healthMap[site.key])
+        ? fail(site, '该站点连续失败，冷却中')
+        : await searchSite(site, keyword, limit)
       if (token !== currentToken) return
       results.push(result)
       done++
       onResult?.(result, done, targets.length)
     }
   }
+
+  // 冷却中的站点排到最后，其他站点保持用户在「影视源」里设定的顺序
+  targets.sort(
+    (a, b) =>
+      Number(isCoolingDown(healthMap[a.key])) - Number(isCoolingDown(healthMap[b.key]))
+  )
 
   await Promise.all(
     Array.from({ length: Math.min(concurrency, targets.length) }, () => worker())

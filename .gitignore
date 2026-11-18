@@ -8,3 +8,6 @@ release/
 
 # 便携数据目录（配置源、站点覆盖、设置、浏览器缓存）
 data/
+
+# Bit Lantern local data
+.bitlantern/

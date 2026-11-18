@@ -60,13 +60,7 @@ export interface SearchSession {
   error?: string
 }
 
-/** 聚合视图里的一条：同名影片可能来自多个站点 */
-export interface MergedVod extends Vod {
-  /** 拥有这部影片的全部站点 key（第一个是代表） */
-  allSiteKeys: string[]
-  /** 除了代表之外，其它可切换的站点 */
-  alternatives: Vod[]
-}
+export type { MergedVod } from '@core/dedupe/merge'
 
 /**
  * 搜索的批次号。React 的 StrictMode 会把副作用跑两遍，界面上的「清空再搜」
@@ -168,130 +162,7 @@ export function detailKey(siteKey: string, vodId: string): string {
   return `${siteKey}::${vodId}`
 }
 
-/**
- * 片名与关键词的贴合度，越小越靠前。
- * 只按「有几个源」排会把《庆余年之帝王业》排到《庆余年第一季》前面，
- * 所以要先用关键词贴合度兜住相关性，再让源多的胜出。
- */
-function matchRank(name: string, keyword: string): number {
-  const n = normalizeName(name)
-  const k = normalizeName(keyword)
-  if (!k) return 3
-  if (n === k) return 0
-  if (n.startsWith(k)) return 1
-  if (n.includes(k)) return 2
-  return 3
-}
-
-/**
- * 同一个站点可能对同一部影片返回好几条（国语版 / 粤语版 / 重复收录），
- * 这里每个站点只留一条：先看信息全不全，再优先用最干净的那个片名，
- * 免得卡片上顶着「庆余年第二季粤语」这种带了后缀的标题。
- */
-function collapseBySite(list: Vod[]): Vod[] {
-  const sorted = [...list].sort((a, b) => {
-    const sa = scoreCandidate(a)
-    const sb = scoreCandidate(b)
-    if (sa !== sb) return sb - sa
-    return (a.vod_name ?? '').length - (b.vod_name ?? '').length
-  })
-  const seen = new Set<string>()
-  const out: Vod[] = []
-  for (const vod of sorted) {
-    if (seen.has(vod.siteKey)) continue
-    seen.add(vod.siteKey)
-    out.push(vod)
-  }
-  return out
-}
-
-/**
- * 把各站点的结果按归一化片名合并成「一部影片一条」。
- *
- * 代表条目取信息最全的那条（有海报 > 有备注 > 有评分），所以合并后的卡片
- * 不会因为先到的站点没给海报就变成灰块。
- */
-export function mergeResults(
-  results: SiteSearchResult[],
-  options: {
-    keyword?: string
-    filterCommentary?: boolean
-    /**
-     * 上一轮已经上屏的顺序（归一化片名 → 名次），只有分类浏览翻页时会传。
-     * 传了就把老卡片原样排在前面、新一页的追在后面。
-     */
-    previousOrder?: Map<string, number>
-  } = {}
-): { merged: MergedVod[]; hidden: number } {
-  const { keyword = '', filterCommentary = true } = options
-  const groups = new Map<string, Vod[]>()
-  let hidden = 0
-
-  for (const result of results) {
-    for (const vod of result.list) {
-      const name = (vod.vod_name ?? '').trim()
-      if (!name) continue
-      if (filterCommentary && isCommentary(name, vod.type_name)) {
-        hidden++
-        continue
-      }
-      const key = normalizeName(name)
-      if (!key) continue
-      const bucket = groups.get(key)
-      if (!bucket) groups.set(key, [vod])
-      else bucket.push(vod)
-    }
-  }
-
-  const merged: MergedVod[] = []
-  for (const bucket of groups.values()) {
-    const bySite = collapseBySite(bucket)
-    const [best, ...rest] = bySite
-    merged.push({ ...best, allSiteKeys: bySite.map((v) => v.siteKey), alternatives: rest })
-  }
-
-  merged.sort((a, b) => {
-    const ra = matchRank(a.vod_name, keyword)
-    const rb = matchRank(b.vod_name, keyword)
-    if (ra !== rb) return ra - rb
-    if (a.allSiteKeys.length !== b.allSiteKeys.length) {
-      return b.allSiteKeys.length - a.allSiteKeys.length
-    }
-    const sa = scoreCandidate(a)
-    const sb = scoreCandidate(b)
-    if (sa !== sb) return sb - sa
-    return a.vod_name.localeCompare(b.vod_name, 'zh-CN')
-  })
-
-  // 翻页时保住已经上屏的顺序。
-  //
-  // 上面那个排序的第一关键字是「有几个源」，而新一页里和第一页同名的条目会并进
-  // 已有的组、把它的源数抬高，于是那一组整块跳到最前面 —— 实测加载第 2 页时
-  // 开头从「法医秦明之龙番往事 / 黑岛监狱 / 兰香如故」变成「惩罚者2026 /
-  // 蜂鸟行动 / 热血部落」，看起来就是「一加载下一页全部刷新」。
-  //
-  // 所以翻页时分成两拨：上一轮已经在屏幕上的按原名次排前面，新出来的按自己
-  // 的名次追在后面。搜索不传 previousOrder（那边本来就希望好结果往上浮）。
-  const previous = options.previousOrder
-  if (previous?.size) {
-    const known: MergedVod[] = []
-    const fresh: MergedVod[] = []
-    for (const v of merged) {
-      const k = normalizeName(v.vod_name)
-      if (previous.has(k)) known.push(v)
-      else fresh.push(v)
-    }
-    known.sort(
-      (a, b) =>
-        (previous.get(normalizeName(a.vod_name)) ?? 0) -
-        (previous.get(normalizeName(b.vod_name)) ?? 0)
-    )
-    merged.length = 0
-    merged.push(...known, ...fresh)
-  }
-
-  return { merged, hidden }
-}
+export { mergeResults } from '@core/dedupe/merge'
 
 /**
  * 详情页用的「同一部影片的全部片源」。
@@ -501,7 +372,21 @@ export const useApp = create<AppState>((set, get) => ({
         sources: s.sources.map((x) => (x.id === id ? updated : x))
       }))
       if (updated.error) get().notify(`「${updated.name}」同步失败：${updated.error}`, 'danger')
-      else get().notify(`「${updated.name}」同步完成，${updated.siteCount} 个站点`, 'success')
+      else {
+        const usable = updated.usableSiteCount
+        const spiderOnly =
+          updated.siteCount > 0 && typeof usable === 'number' && usable === 0
+        const suffix =
+          typeof usable === 'number' && usable < updated.siteCount
+            ? `（可用 ${usable}）`
+            : ''
+        get().notify(
+          `「${updated.name}」同步完成，${updated.siteCount} 个站点${suffix}${
+            spiderOnly ? '；点播站点依赖 Spider，桌面端暂不可用' : ''
+          }`,
+          spiderOnly ? 'warn' : 'success'
+        )
+      }
       await get().refreshSites()
     } catch (err) {
       get().notify((err as Error).message, 'danger')

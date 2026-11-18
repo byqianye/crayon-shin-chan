@@ -29,8 +29,8 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-brand">
-        <div className="sidebar-logo">T</div>
-        <div className="sidebar-name">TVBox Desktop</div>
+        <div className="sidebar-logo">蜡</div>
+        <div className="sidebar-name">蜡笔小新</div>
       </div>
 
       <nav className="sidebar-nav">

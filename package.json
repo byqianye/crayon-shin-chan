@@ -1,9 +1,14 @@
 {
-  "name": "tvbox-desktop",
+  "name": "crayon-shin-chan",
   "version": "0.1.0",
-  "description": "TVBox Desktop - 纯白极简的 Windows 影视聚合客户端",
+  "description": "蜡笔小新 - Windows 影视聚合客户端",
   "main": "./out/main/index.js",
   "license": "MIT",
+  "author": "byqianye",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/byqianye/crayon-shin-chan.git"
+  },
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
@@ -14,12 +19,13 @@
     "postinstall": "node scripts/ensure-electron.cjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "build:win": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
     "artplayer": "^5.4.0",
     "cheerio": "^1.2.0",
+    "domhandler": "5.0.3",
     "hls.js": "^1.7.3",
     "iconv-lite": "^0.7.3",
     "react": "^19.3.0",

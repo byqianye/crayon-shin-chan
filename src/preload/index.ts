@@ -1,11 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '@shared/ipc'
+import type { HealthSummary } from '@core/health/score'
+import type { DetectResult } from '@core/source/detect'
 import type {
   AiFrame,
   AiSummaryInput,
   AiSummaryResult,
   AppInfo,
   AppSettings,
+  AuditResult,
   CategoryBucket,
   CategoryPage,
   ConfigSource,
@@ -17,6 +20,8 @@ import type {
   LiveResult,
   LiveResolved,
   LiveHealth,
+  LocalSite,
+  LocalSiteInput,
   PlayerInfo,
   ParseInfo,
   ParseResult,
@@ -26,6 +31,7 @@ import type {
   SearchResponse,
   Site,
   TestResult,
+  Tombstones,
   VodDetail
 } from '@shared/types'
 
@@ -61,7 +67,31 @@ const api = {
       ipcRenderer.invoke(IPC.sitesSetEnabled, key, enabled),
     setAllEnabled: (keys: string[], enabled: boolean): Promise<void> =>
       ipcRenderer.invoke(IPC.sitesSetAllEnabled, keys, enabled),
-    test: (key: string): Promise<TestResult> => ipcRenderer.invoke(IPC.sitesTest, key)
+    test: (key: string): Promise<TestResult> => ipcRenderer.invoke(IPC.sitesTest, key),
+    audit: (key: string): Promise<AuditResult> => ipcRenderer.invoke(IPC.sitesAudit, key),
+    /** 忽略订阅里的站点：写墓碑，后续同步不再带回来 */
+    ignore: (key: string): Promise<void> => ipcRenderer.invoke(IPC.sitesIgnore, key)
+  },
+
+  localSites: {
+    list: (): Promise<LocalSite[]> => ipcRenderer.invoke(IPC.localSitesList),
+    add: (input: LocalSiteInput): Promise<LocalSite> =>
+      ipcRenderer.invoke(IPC.localSitesAdd, input),
+    update: (key: string, patch: Partial<LocalSiteInput>): Promise<LocalSite> =>
+      ipcRenderer.invoke(IPC.localSitesUpdate, key, patch),
+    remove: (key: string): Promise<void> => ipcRenderer.invoke(IPC.localSitesRemove, key),
+    detect: (url: string): Promise<DetectResult> =>
+      ipcRenderer.invoke(IPC.localSitesDetect, url)
+  },
+
+  health: {
+    list: (): Promise<Record<string, HealthSummary>> => ipcRenderer.invoke(IPC.healthList),
+    clear: (): Promise<void> => ipcRenderer.invoke(IPC.healthClear)
+  },
+
+  tombstones: {
+    list: (): Promise<Tombstones> => ipcRenderer.invoke(IPC.tombstonesList),
+    clear: (): Promise<void> => ipcRenderer.invoke(IPC.tombstonesClear)
   },
 
   search: {

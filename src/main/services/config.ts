@@ -9,7 +9,7 @@ import type {
   Site,
   SiteType
 } from '@shared/types'
-import { fetchJson } from './http'
+import { loadConfigPayload } from './configPayload'
 
 /**
  * 配置解析层：同时吃 TVBox 兼容方言与本项目简洁方言。
@@ -163,6 +163,18 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
     site.unsupported = '该站点依赖内置 Spider 或本地资源，桌面端无法直接请求'
     site.searchable = false
     site.quickSearch = false
+  } else if (/^csp_/i.test(site.api)) {
+    site.unsupported = '该站点依赖 TVBox Spider（jar），桌面端暂不支持'
+    site.searchable = false
+    site.quickSearch = false
+  } else if (/\.py(?:\?|$)/i.test(site.api)) {
+    site.unsupported = '该站点依赖 Python Spider（.py），桌面端暂不支持'
+    site.searchable = false
+    site.quickSearch = false
+  } else if (/\.js(?:\?|$)|drpy/i.test(site.api) || /^\.{1,2}\//.test(site.api)) {
+    site.unsupported = '该站点依赖 JS Spider（drpy），桌面端暂不支持'
+    site.searchable = false
+    site.quickSearch = false
   } else if (type === 0) {
     site.unsupported = '需要配套 Spider（jar/dex），桌面端无法运行'
     site.searchable = false
@@ -277,7 +289,7 @@ export async function loadConfigSource(
     const text = await fs.readFile(source.url, 'utf-8')
     json = JSON.parse(text.replace(/^\uFEFF/, ''))
   } else {
-    json = await fetchJson(source.url, { timeout })
+    json = (await loadConfigPayload(source.url, timeout)).raw
   }
   return parseConfig(json, { sourceId: source.id, sourceName: source.name, defaults: { timeout } })
 }

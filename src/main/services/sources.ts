@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { ConfigSource, ParsedConfig } from '@shared/types'
+import { normalizeSourceUrl } from '@shared/url'
 import { parseConfig, loadConfigSource } from './config'
+import { extractMultiRepo, loadMultiRepo } from './multirepo'
 import { getSettings } from './settings'
+import { addSourceTombstone, removeSourceTombstone } from './tombstones'
 import { readStore, writeStore } from './store'
 
 const NAME = 'sources'
@@ -46,11 +49,13 @@ export async function addSource(input: {
   url: string
   kind?: 'url' | 'file'
 }): Promise<ConfigSource> {
-  const url = input.url.trim()
+  const url = normalizeSourceUrl(input.url)
   if (!url) throw new Error('地址不能为空')
   const kind = input.kind ?? (/^https?:\/\//i.test(url) ? 'url' : 'file')
   const list = await listSources()
-  if (list.some((s) => s.url === url)) throw new Error('该配置源已存在')
+  if (list.some((s) => normalizeSourceUrl(s.url) === url)) throw new Error('该配置源已存在')
+  // 用户主动重新添加同一地址，视为解除之前的删除墓碑
+  await removeSourceTombstone(url)
 
   const source: ConfigSource = {
     id: randomUUID(),
@@ -88,7 +93,11 @@ export async function updateSource(
   const idx = list.findIndex((s) => s.id === id)
   if (idx < 0) throw new Error('配置源不存在')
   const next: ConfigSource = { ...list[idx], ...patch }
-  if (patch.url) next.kind = /^https?:\/\//i.test(patch.url) ? 'url' : 'file'
+  if (patch.url) {
+    next.url = normalizeSourceUrl(patch.url)
+    next.kind = /^https?:\/\//i.test(next.url) ? 'url' : 'file'
+    next.repos = undefined
+  }
   list[idx] = next
   await saveSources(list)
   if (patch.enabled === false) parsedCache.delete(id)
@@ -97,6 +106,8 @@ export async function updateSource(
 
 export async function removeSource(id: string): Promise<void> {
   const list = await listSources()
+  const source = list.find((s) => s.id === id)
+  if (source) await addSourceTombstone(source.url)
   await saveSources(list.filter((s) => s.id !== id))
   parsedCache.delete(id)
 }
@@ -111,15 +122,37 @@ export async function syncSource(id: string): Promise<ConfigSource> {
   const next: ConfigSource = { ...source }
   try {
     const parsed = await loadConfigSource(source, settings.timeout)
-    parsedCache.set(source.id, parsed)
-    next.raw = parsed.raw
+    const refs = extractMultiRepo(parsed.raw)
+    if (refs.length && !parsed.sites.length) {
+      // 多仓清单：逐个拉取子仓库，合并成一份可直接 hydrate 的配置
+      const multi = await loadMultiRepo(source, refs, settings.timeout)
+      parsedCache.set(source.id, multi.parsed)
+      next.kind = 'multirepo'
+      next.repos = multi.repos
+      next.raw = {
+        name: multi.parsed.name,
+        sites: multi.parsed.sites,
+        parses: multi.parsed.parses,
+        lives: multi.parsed.lives
+      }
+      next.siteCount = multi.parsed.sites.length
+      next.usableSiteCount = multi.parsed.sites.filter((s) => !s.unsupported).length
+      next.liveCount = multi.parsed.lives.length
+      next.parseCount = multi.parsed.parses.length
+    } else {
+      parsedCache.set(source.id, parsed)
+      next.kind = source.kind === 'file' ? 'file' : 'url'
+      next.repos = undefined
+      next.raw = parsed.raw
+      next.siteCount = parsed.sites.length
+      next.usableSiteCount = parsed.sites.filter((s) => !s.unsupported).length
+      next.liveCount = parsed.lives.length
+      next.parseCount = parsed.parses.length
+    }
     next.lastSync = Date.now()
     next.error = undefined
     next.name = source.name || parsed.name
     next.notice = parsed.notice
-    next.siteCount = parsed.sites.length
-    next.liveCount = parsed.lives.length
-    next.parseCount = parsed.parses.length
   } catch (err) {
     next.error = (err as Error).message
     // 同步失败但本地有缓存时保留可用数据，界面只提示不中断

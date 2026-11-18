@@ -2,11 +2,15 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { IPC } from '@shared/ipc'
+import { detectSourceBuffer } from '@core/source/detect'
 import type { AiFrame, AiSummaryInput, AppInfo, FavoriteItem, HistoryItem, SearchOptions, SearchResponse } from '@shared/types'
+import { auditSite } from './services/audit'
 import { getVodDetail } from './services/detail'
+import { request } from './services/http'
 import { summarizeEpisode, summarizeEpisodeVisual } from './services/ai'
 import { browseCategory, clearCategoryCache, listCategories } from './services/category'
 import { clearHomeCache, listHomeSections } from './services/home'
+import { getHealthSummary, clearHealth as clearSiteHealth } from './services/health'
 import { clearLiveCache, loadLive } from './services/live'
 import { clearHealth, getHealth, probeLines } from './services/liveHealth'
 import { headersFor, resolveRoomUrl } from './services/streamResolve'
@@ -22,6 +26,12 @@ import {
 import { ensureReachableProxy } from './services/proxy'
 import { detectPlayers, openInPlayer } from './services/player'
 import {
+  addLocalSite,
+  listLocalSites,
+  removeLocalSite,
+  updateLocalSite
+} from './services/localSites'
+import {
   addParse,
   listParses,
   removeParse,
@@ -33,6 +43,7 @@ import type { ResolveOptions } from './services/parse'
 import { cancelSearch, searchAll } from './services/search'
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from './services/settings'
 import { getSites, setSiteEnabled, setSitesEnabled, testSite } from './services/sites'
+import { addSiteTombstone, clearTombstones, listTombstones } from './services/tombstones'
 import { addPreset, ensureBundledSources, listPresets } from './services/presets'
 import {
   addSource,
@@ -211,6 +222,46 @@ function registerIpc(): void {
     setSitesEnabled(keys, enabled)
   )
   ipcMain.handle(IPC.sitesTest, (_e, key: string) => testSite(key))
+  ipcMain.handle(IPC.sitesAudit, (_e, key: string) => auditSite(key))
+  ipcMain.handle(IPC.sitesIgnore, async (_e, key: string) => {
+    await addSiteTombstone(key)
+    clearCategoryCache()
+    clearHomeCache()
+  })
+
+  ipcMain.handle(IPC.localSitesList, () => listLocalSites())
+  ipcMain.handle(IPC.localSitesAdd, async (_e, input) => {
+    const result = await addLocalSite(input)
+    clearCategoryCache()
+    clearHomeCache()
+    return result
+  })
+  ipcMain.handle(IPC.localSitesUpdate, async (_e, key: string, patch) => {
+    const result = await updateLocalSite(key, patch)
+    clearCategoryCache()
+    clearHomeCache()
+    return result
+  })
+  ipcMain.handle(IPC.localSitesRemove, async (_e, key: string) => {
+    await removeLocalSite(key)
+    clearCategoryCache()
+    clearHomeCache()
+  })
+  ipcMain.handle(IPC.localSitesDetect, async (_e, rawUrl: string) => {
+    const url = (rawUrl ?? '').trim()
+    if (!/^https?:\/\//i.test(url)) throw new Error('请输入 http(s) 地址')
+    const settings = await getSettings()
+    const res = await request(url, {
+      timeout: Math.min(settings.timeout, 15),
+      header: { 'User-Agent': 'okhttp/3.12.0' }
+    })
+    return detectSourceBuffer(res.buffer, res.headers['content-type'] ?? '')
+  })
+
+  ipcMain.handle(IPC.healthList, () => getHealthSummary())
+  ipcMain.handle(IPC.healthClear, () => clearSiteHealth())
+  ipcMain.handle(IPC.tombstonesList, () => listTombstones())
+  ipcMain.handle(IPC.tombstonesClear, () => clearTombstones())
 
   ipcMain.handle(
     IPC.searchRun,
@@ -281,7 +332,7 @@ function registerIpc(): void {
 }
 
 void app.whenReady().then(async () => {
-  app.setAppUserModelId('com.tvbox.desktop')
+  app.setAppUserModelId('com.crayonshinchan.desktop')
 
   // 必须在建窗口之前跑完：系统代理指向一个没在监听的端口时（代理软件退出了、
   // Windows 的代理开关还留着），Chromium 的每个请求都会 ERR_PROXY_CONNECTION_FAILED，

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import type { AppSettings, ConfigSource, ParseInfo, ParseTestResult, PlayerInfo } from '@shared/types'
+import type {
+  AppSettings,
+  ConfigSource,
+  ParseInfo,
+  ParseTestResult,
+  PlayerInfo,
+  Tombstones
+} from '@shared/types'
 import { useApp } from '@/store/useApp'
 import { Switch } from '@/components/Switch'
 import { Icon } from '@/components/icons'
@@ -23,6 +30,14 @@ export function Settings(): JSX.Element {
   const [adding, setAdding] = useState(false)
   const [addingPreset, setAddingPreset] = useState('')
   const [editing, setEditing] = useState<{ id: string; name: string; url: string } | null>(null)
+  const [tombstones, setTombstones] = useState<Tombstones | null>(null)
+
+  useEffect(() => {
+    void window.api.tombstones
+      .list()
+      .then(setTombstones)
+      .catch(() => undefined)
+  }, [sources])
 
   async function add(): Promise<void> {
     const value = url.trim()
@@ -143,8 +158,11 @@ export function Settings(): JSX.Element {
                       <div className="list-row-sub">{preset.desc}</div>
                     </div>
                     <span className="tag tag-outline">
-                      {preset.siteCount} 个站点
-                      {preset.liveCount ? ` · ${preset.liveCount} 个直播源` : ''}
+                      {preset.remote
+                        ? '远程配置'
+                        : `${preset.siteCount} 个站点${
+                            preset.liveCount ? ` · ${preset.liveCount} 个直播源` : ''
+                          }`}
                     </span>
                     <button
                       type="button"
@@ -203,15 +221,28 @@ export function Settings(): JSX.Element {
                       <div className="list-row-main">
                         <div className="list-row-title">
                           <span className="truncate">{source.name}</span>
-                          <span className="tag tag-outline">{source.kind === 'url' ? '订阅' : '本地'}</span>
+                          <span className="tag tag-outline">
+                            {source.kind === 'url'
+                              ? '订阅'
+                              : source.kind === 'multirepo'
+                                ? '多仓'
+                                : '本地'}
+                          </span>
                           {source.error ? <span className="tag tag-danger">异常</span> : null}
                         </div>
                         <div className="list-row-sub truncate" title={source.url}>
                           {source.url}
+                          {source.kind === 'multirepo' && source.repos?.length
+                            ? ` · ${source.repos.length} 个仓库（${source.repos.filter((r) => r.ok).length} 成功）`
+                            : ''}
                         </div>
                       </div>
                       <span className="fs-12 text-3 nowrap">
-                        站点 {source.siteCount} · 直播 {source.liveCount} · 解析 {source.parseCount}
+                        站点 {source.siteCount}
+                        {typeof source.usableSiteCount === 'number'
+                          ? `（可用 ${source.usableSiteCount}）`
+                          : ''}{' '}
+                        · 直播 {source.liveCount} · 解析 {source.parseCount}
                       </span>
                       <span className="fs-12 text-3 nowrap">{relativeTime(source.lastSync)}</span>
                       <div className="list-row-actions">
@@ -256,6 +287,41 @@ export function Settings(): JSX.Element {
                 .join('　|　')}
             </div>
           ) : null}
+        </section>
+
+        <section className="section">
+          <div className="section-head">
+            <div className="section-title">忽略列表</div>
+            <div className="section-more">删除过的配置源、手动忽略的站点，同步时不会复活</div>
+          </div>
+          <div className="panel">
+            <div className="panel-body-pad">
+              <div className="form-row" style={{ alignItems: 'center' }}>
+                <span className="fs-13">
+                  配置源 {tombstones?.sourceUrls.length ?? 0} 个 · 站点{' '}
+                  {tombstones?.siteKeys.length ?? 0} 个
+                </span>
+                <div className="grow" />
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={!tombstones?.sourceUrls.length && !tombstones?.siteKeys.length}
+                  onClick={async () => {
+                    if (!window.confirm('清空后，之前删除/忽略的源可能在下次同步时重新出现。继续？')) return
+                    await window.api.tombstones.clear()
+                    setTombstones({ sourceUrls: [], siteKeys: [] })
+                    await refreshAll()
+                    notify('已清空忽略列表', 'success')
+                  }}
+                >
+                  清空忽略列表
+                </button>
+              </div>
+              <div className="field-hint" style={{ marginTop: 8 }}>
+                手动源删除后不会进入站点墓碑；清空后重新同步订阅即可恢复被忽略的站点。
+              </div>
+            </div>
+          </div>
         </section>
 
         <ParseSettingsSection />

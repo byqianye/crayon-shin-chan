@@ -1,7 +1,8 @@
-# TVBox Desktop
+# 蜡笔小新
 
-[![Release](https://img.shields.io/github/v/release/hgtuj5688/tvbox-desktop?label=%E4%B8%8B%E8%BD%BD&color=2563EB)](https://github.com/hgtuj5688/tvbox-desktop/releases/latest)
-[![License](https://img.shields.io/github/license/hgtuj5688/tvbox-desktop?color=16A34A)](LICENSE)
+基于 [hgtuj5688/tvbox-desktop](https://github.com/hgtuj5688/tvbox-desktop)（MIT）二次开发的 Windows 影视聚合客户端。
+
+> 名称仅作项目代号，与《蜡笔小新》版权方无关；软件不内置、不托管、不分发任何影视内容，所有源均由用户自行配置。
 
 纯白极简的 Windows 影视聚合客户端。吃安卓 TVBox 的配置订阅格式，用桌面端更好用的交互方式呈现。
 

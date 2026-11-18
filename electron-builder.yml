@@ -1,6 +1,6 @@
-appId: com.tvbox.desktop
-productName: TVBox Desktop
-copyright: Copyright © 2025
+appId: com.crayonshinchan.desktop
+productName: 蜡笔小新
+copyright: Copyright © 2026 蜡笔小新
 
 directories:
   output: release
@@ -18,7 +18,7 @@ win:
       arch: [x64]
     - target: zip
       arch: [x64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: CrayonShinChan-${version}-${arch}.${ext}
 
 nsis:
   oneClick: false
@@ -26,7 +26,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: TVBox Desktop
+  shortcutName: 蜡笔小新
   deleteAppDataOnUninstall: false
 
 # 国内网络下 builder 需要下载 nsis / winCodeSign 等二进制，走镜像

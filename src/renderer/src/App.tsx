@@ -68,8 +68,8 @@ function FirstRun(): JSX.Element {
   return (
     <div className="page">
       <div className="first-run">
-        <div className="first-run-logo">T</div>
-        <h1 className="first-run-title">欢迎使用 TVBox Desktop</h1>
+        <div className="first-run-logo">蜡</div>
+        <h1 className="first-run-title">欢迎使用 蜡笔小新</h1>
         <p className="first-run-desc">
           这是一个纯白极简的 Windows 影视聚合客户端。软件本身不提供任何内容，
           请先添加一个 JSON 配置源（订阅地址或本地配置文件），之后即可聚合搜索、多线路选集播放。

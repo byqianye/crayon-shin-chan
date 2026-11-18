@@ -1,5 +1,5 @@
 // 生成应用图标：build/icon.png（512×512）+ build/icon.ico（16/24/32/48/64/128/256）
-// 造型与界面左上角 logo 一致：蓝色渐变圆角方块 + 白色圆角播放三角。
+// 造型与界面左上角 logo 一致：蜡笔橙渐变圆角方块 + 白色圆角播放三角。
 // 不依赖任何外部库，PNG 用 zlib 自己编，ICO 直接内嵌 PNG。
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -19,8 +19,8 @@ const TRI = [
   [196, 360]
 ]
 const TRI_R = 17
-const GRAD_A = [59, 130, 246] // #3B82F6
-const GRAD_B = [29, 78, 216] // #1D4ED8
+const GRAD_A = [251, 191, 36] // #FBBF24
+const GRAD_B = [249, 115, 22] // #F97316
 
 function insideRoundRect(x, y, k) {
   const x0 = RECT.x0 * k,

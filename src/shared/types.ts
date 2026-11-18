@@ -33,6 +33,35 @@ export interface Site {
   unsupported?: string
   /** 手写配置的网页解析规则 */
   rules?: HtmlRules
+  /** 站点来源：订阅配置或手动添加 */
+  origin?: 'config' | 'manual'
+}
+
+/** 手动添加的单个影视源（不依赖订阅配置） */
+export interface LocalSite {
+  key: string
+  name: string
+  type: SiteType
+  api: string
+  searchable: boolean
+  filterable: boolean
+  playerType: number
+  header?: Record<string, string>
+  timeout?: number
+  enabled: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface LocalSiteInput {
+  name?: string
+  type?: SiteType
+  api: string
+  searchable?: boolean
+  filterable?: boolean
+  header?: Record<string, string>
+  timeout?: number
+  enabled?: boolean
 }
 
 export interface HtmlRules {
@@ -152,18 +181,60 @@ export interface ConfigSource {
   name: string
   /** 远程 URL 或本地绝对路径 */
   url: string
-  kind: 'url' | 'file'
+  kind: 'url' | 'file' | 'multirepo'
+  /** 多仓清单里的子仓库同步结果 */
+  repos?: MultiRepoEntry[]
   enabled: boolean
   /** 0 表示从未成功同步 */
   lastSync: number
   /** 最近一次同步失败原因 */
   error?: string
   siteCount: number
+  /** 其中桌面端可直接请求的站点数（不含 jar/py/js Spider） */
+  usableSiteCount?: number
   liveCount: number
   parseCount: number
   notice?: string
   /** 最近一次成功的原始配置，用于离线 */
   raw?: unknown
+}
+
+export interface MultiRepoEntry {
+  name: string
+  url: string
+  ok?: boolean
+  siteCount?: number
+  error?: string
+}
+
+/** 源健康度：最近请求样本 + 熔断状态 */
+export interface SiteHealth {
+  siteKey: string
+  samples: { ok: boolean; ms: number; at: number }[]
+  consecutiveFails: number
+  lastOkAt?: number
+  lastFailAt?: number
+  cooldownUntil?: number
+}
+
+/** 单站点审计结果 */
+export interface AuditResult {
+  siteKey: string
+  siteName: string
+  ok: boolean
+  categories: number
+  searchHits: number
+  detailLines: number
+  episodes: number
+  ms: number
+  failStage?: 'category' | 'search' | 'detail'
+  reason?: string
+}
+
+/** 删除墓碑：用户明确删除/忽略的源，后续同步不再复活 */
+export interface Tombstones {
+  sourceUrls: string[]
+  siteKeys: string[]
 }
 
 /** 内置推荐订阅（只把摘要送到界面，配置内容留在主进程） */
@@ -173,6 +244,8 @@ export interface SourcePresetInfo {
   desc: string
   siteCount: number
   liveCount: number
+  /** 远程订阅：点「添加」时只登记 URL，配置内容在同步时拉取 */
+  remote?: boolean
 }
 
 export interface Vod {

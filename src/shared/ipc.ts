@@ -20,6 +20,20 @@ export const IPC = {
   sitesSetEnabled: 'sites:set-enabled',
   sitesSetAllEnabled: 'sites:set-all-enabled',
   sitesTest: 'sites:test',
+  sitesAudit: 'sites:audit',
+  sitesIgnore: 'sites:ignore',
+
+  localSitesList: 'local-sites:list',
+  localSitesAdd: 'local-sites:add',
+  localSitesUpdate: 'local-sites:update',
+  localSitesRemove: 'local-sites:remove',
+  localSitesDetect: 'local-sites:detect',
+
+  healthList: 'health:list',
+  healthClear: 'health:clear',
+
+  tombstonesList: 'tombstones:list',
+  tombstonesClear: 'tombstones:clear',
 
   searchRun: 'search:run',
   searchCancel: 'search:cancel',
