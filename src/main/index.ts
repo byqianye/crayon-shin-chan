@@ -44,7 +44,13 @@ import { cancelSearch, searchAll } from './services/search'
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from './services/settings'
 import { getSites, setSiteEnabled, setSitesEnabled, testSite } from './services/sites'
 import { addSiteTombstone, clearTombstones, listTombstones } from './services/tombstones'
-import { addPreset, ensureBundledSources, listPresets } from './services/presets'
+import {
+  addPreset,
+  ensureBundledSources,
+  ensureRemotePresetRecords,
+  listPresets,
+  syncRemotePresets
+} from './services/presets'
 import {
   addSource,
   hydrate,
@@ -355,7 +361,10 @@ void app.whenReady().then(async () => {
   // 装完即用：一个配置源都没有时（全新安装）自动装好内置订阅并同步一次，
   // 用户打开就能搜、能看直播，不必先自己去找订阅地址。
   await ensureBundledSources()
+  // 四个 TVBox 源先登记、不拉网络；窗口起来后再后台同步，避免首启被长超时拖住。
+  await ensureRemotePresetRecords()
   await createWindow()
+  void syncRemotePresets()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()

@@ -8,6 +8,8 @@ import { readStore, writeStore } from './store'
 
 /** 记住「内置订阅已经送过了」，避免用户删光后重启又冒出来 */
 const BUNDLED_FLAG = 'bundled-sources'
+/** 用户指定的四个 TVBox 源只预置一次；用户删掉后不复活 */
+const REMOTE_BUNDLED_FLAG = 'bundled-remote-sources'
 
 /**
  * 内置推荐订阅。
@@ -196,6 +198,41 @@ export async function addPreset(id: string): Promise<ConfigSource> {
   const already = existing.find((s) => s.url === file)
   if (already) throw new Error('这个内置订阅已经添加过了')
   return addSource({ name: preset.name, url: file, kind: 'file' })
+}
+
+/**
+ * 首启登记四个 TVBox 配置源。只写源记录，不拉网络：
+ * 这样窗口能立刻显示它们，不会被这几个源的长超时拖住启动。
+ */
+export async function ensureRemotePresetRecords(): Promise<void> {
+  if (await readStore<boolean>(REMOTE_BUNDLED_FLAG, false)) return
+  for (const preset of REMOTE_PRESETS) {
+    try {
+      await addPreset(preset.id)
+    } catch (err) {
+      const message = (err as Error).message
+      if (!message.includes('已经添加过')) {
+        console.warn(`[presets] 预置源 ${preset.name} 登记失败：`, err)
+      }
+    }
+  }
+  await writeStore(REMOTE_BUNDLED_FLAG, true)
+}
+
+/** 窗口起来后后台同步四个 TVBox 源；失败只记日志，不影响启动 */
+export async function syncRemotePresets(): Promise<void> {
+  const sources = await listSources()
+  for (const preset of REMOTE_PRESETS) {
+    const source = sources.find(
+      (item) => normalizeSourceUrl(item.url) === normalizeSourceUrl(preset.url)
+    )
+    if (!source || source.lastSync) continue
+    try {
+      await syncSource(source.id)
+    } catch (err) {
+      console.warn(`[presets] 预置源 ${preset.name} 后台同步失败：`, err)
+    }
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "crayon-shin-chan",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "蜡笔小新 - Windows 影视聚合客户端",
   "main": "./out/main/index.js",
   "license": "MIT",
