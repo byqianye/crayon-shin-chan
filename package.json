@@ -19,7 +19,7 @@
     "postinstall": "node scripts/ensure-electron.cjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "build:win": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
