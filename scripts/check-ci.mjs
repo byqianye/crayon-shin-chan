@@ -27,6 +27,8 @@ check('CI 使用冻结锁文件', /pnpm install --frozen-lockfile/.test(ci))
 check('CI 编译 Spider 宿主', /pnpm spider:build/.test(ci))
 check('CI 编译 unidbg 桥', /pnpm spider:unidbg/.test(ci))
 check('CI 运行端到端自检', /node scripts\/selftest\.mjs/.test(ci))
+check('自检等待窗口足够长', /600 秒内没有就绪/.test(ci))
+check('清理步骤不会掩盖失败', /continue-on-error: true/.test(ci))
 check('发布工作流由 tag 或手动触发', /tags: \['v\*'\]/.test(release) && /workflow_dispatch:/.test(release))
 check('发布工作流生成精简 JRE', /pnpm spider:runtime/.test(release))
 check('发布工作流校验产物', /node scripts\/release-check\.mjs/.test(release))
@@ -42,4 +44,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 16 项工作流约束通过')
+console.log('[check-ci] 18 项工作流约束通过')
