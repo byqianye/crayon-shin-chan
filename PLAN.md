@@ -414,14 +414,15 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
   **draft Release**。已存在的正式 Release 会被拒绝覆盖，资产不足 5 个直接失败。
 - 新增守卫脚本：`release-check.mjs`（版本/CHANGELOG/产物一致性）、
   `release-notes.mjs`（从 CHANGELOG 生成发布说明）、`check-lockfile.mjs`、
-  `check-ci.mjs`（25 项工作流结构约束）。
+  `check-ci.mjs`（28 项工作流结构约束）。
 - 统一包管理器：`packageManager: pnpm@11.25.0`，删除过期且包名错误的
   `package-lock.json`；CI 使用 `pnpm install --frozen-lockfile`。
 - 本地已验证：`actionlint` 对两个工作流报 0 问题；`pnpm@11.25.0` 在只读副本上
   `--frozen-lockfile` 通过；两个负向用例（版本 0.1.4、CHANGELOG 9.9.9）均以
   退出码 1 失败；typecheck、build、177/177 自检通过。
-- 2026-11-20 实跑收口：CI run 44705758715 三个 job 全绿；Release run 44706599956
-  全绿；`v0.1.3` tag 已推送，draft Release 已生成，9 个资产齐全（完整版
+- 2026-11-20 实跑收口：CI run 44705758715（代码）与 44709072170（文档）三个 job
+  全绿；Release run 44706599956 全绿；`v0.1.3` tag 已推送，draft Release 已生成，
+  9 个资产齐全（完整版
   exe / blockmap / zip，精简版 exe / blockmap / zip，latest.yml，
   SHA256SUMS.txt / SHA256SUMS-lite.txt）。draft 尚未转正式，正式发布前仍需用户确认。
 

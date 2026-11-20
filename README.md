@@ -14,7 +14,7 @@
 | **当前版本** | `0.1.3`，实际可下载版本以 Releases 页面的发布记录为准 |
 | **形态** | 便携——配置与缓存都在程序同级的 `data\`，不写 C 盘用户目录 |
 | **Spider** | 内置按需启动的 JVM 宿主，可运行带 `spider` 文件的 `csp_*` jar/dex 站点 |
-| **验证** | `pnpm selftest` 端到端 **177 项断言**；`pnpm typecheck` / `pnpm build` |
+| **验证** | `pnpm selftest` 端到端 **177 项断言**；`pnpm spider:contract` **10/10**；`pnpm typecheck` / `pnpm build` |
 | **进度** | M1 → M4 全部完成，另有若干轮用户反馈驱动的修补 |
 
 - 设计文档（功能范围 / JSON 格式规范 / 里程碑）：见 [`功能框架.txt`](功能框架.txt)
