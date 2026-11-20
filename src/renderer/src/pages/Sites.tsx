@@ -46,6 +46,15 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+function sourceLabel(raw?: string): string {
+  if (!raw) return '未配置 jar'
+  try {
+    return new URL(raw.replace(/;md5;.*$/i, '')).host
+  } catch {
+    return raw.split(/[\\/]/).pop() || raw
+  }
+}
+
 function detectHint(detected: DetectResult | null): string {
   if (!detected) return ''
   switch (detected.kind) {
@@ -254,6 +263,19 @@ export function Sites(): JSX.Element {
     }
   }
 
+  async function toggleSite(site: Site, enabled: boolean): Promise<void> {
+    if (
+      enabled &&
+      site.spiderClass &&
+      !window.confirm(
+        `「${site.name}」会运行来自 ${sourceLabel(site.jar)} 的第三方 Spider 代码，能力和风险由该 jar 决定。\n\n宿主只做了独立 JVM 与工作目录隔离，不是安全沙箱。确认启用？`
+      )
+    ) {
+      return
+    }
+    await setSiteEnabled(site.key, enabled)
+  }
+
   async function test(site: Site): Promise<void> {
     setTesting((t) => ({ ...t, [site.key]: true }))
     try {
@@ -335,6 +357,7 @@ export function Sites(): JSX.Element {
     if (
       !window.confirm(
         `将启用当前列表中的 ${disabledSpider.length} 个 Spider 站点。\n` +
+          '这些站点会运行配置来源提供的第三方 jar；宿主只做独立 JVM 与工作目录隔离，不是安全沙箱。\n' +
           '首次搜索会按需启动 JVM 并转换 spider jar，站点越多等待越久；建议先按来源筛选。继续？'
       )
     ) {
@@ -632,7 +655,7 @@ export function Sites(): JSX.Element {
                 <Switch
                   checked={site.enabled}
                   disabled={Boolean(site.unsupported)}
-                  onChange={(v) => void setSiteEnabled(site.key, v)}
+                  onChange={(v) => void toggleSite(site, v)}
                   title={site.unsupported ?? '启用 / 停用该站点'}
                 />
 
@@ -661,6 +684,7 @@ export function Sites(): JSX.Element {
                         <span className="mono">{site.api}</span>
                         <span style={{ margin: '0 8px' }}>·</span>
                         内置 JVM 运行，{site.enabled ? '已启用' : '开启开关后可用'}
+                        <span title={site.jar ?? ''}> · 来源 {sourceLabel(site.jar)}</span>
                         {(() => {
                           const cached = spiderCache?.sites.find((item) => item.siteKey === site.key)
                           if (!cached?.cached) return <span> · 尚未缓存</span>

@@ -117,6 +117,8 @@ pnpm spider:matrix --out "$env:TEMP\spider-reports"
 
 Spider 站点不只是能搜索：启用后会进入首页内容位（配置 `home.sections` 里可以按 key / 中文名引用）和聚合分类浏览（用宿主返回的 `class` 树归并到统一大类）。影视源页会显示每个 Spider 的缓存大小与 jar SHA256，支持单站/全部清理缓存、重新准备运行时；连通性测试失败会标出缺类、Android API、native 加固、超时、TLS、空播放字段等分类。
 
+> Spider jar 是来自配置源的第三方代码。首次启用会弹出确认并显示来源；JVM 启动时会过滤 token/API Key 等敏感环境变量，工作目录限制在 `data\spider-work\`。连续 3 次调用超时会杀掉宿主，下次调用自动重启。独立 JVM 不是安全沙箱，启用前请确认来源可信。
+
 当前边界：依赖 WebView 的 Spider、Python/JS Spider、`DexNative` 加固类和
 会自递归调用 `Pan.init` 的站点仍可能失败；失败原因会在影视源页或日志中明确显示。
 

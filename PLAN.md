@@ -452,3 +452,17 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - 实测（隔离数据目录 + XYQ.jar + Ikanbot）：首页内容位 24 条、分类「电影/电影」
   24 条、缓存 1.30MB / SHA256 `ace8cb39…`、清理后 0 文件、重启宿主 107ms、
   缺类站点返回 `ClassNotFoundException` 且分类为 `missing_class`；177/177 自检通过。
+
+## 19. Spider 运行时隔离与安全提示（2026-11-20）
+
+- 首次启用单个 Spider 站点或批量启用时，确认框明确提示「运行配置来源的第三方
+  jar，独立 JVM 不是安全沙箱」，并显示 jar 来源 host；影视源列表也显示来源与
+  SHA256。
+- `sanitizedEnv()` 在拉起 JVM 前过滤 token、secret、password、API key、
+  cookie/session、常见云厂商/GitHub 凭据等环境变量，避免把宿主凭据暴露给 jar。
+- JVM 的工作目录、`user.home` 与 `java.io.tmpdir` 都限制到
+  `data/spider-work/`；不再以应用目录为 cwd。
+- `SpiderHostClient` 连续 3 次调用超时会杀掉卡死的宿主，下一次调用由
+  `ensureReady()` 自动重新拉起；影视源页提供「重新准备运行时」按钮。
+- 实测：Ikanbot 首页 24 条、分类 24 条、缓存 1.30MB/SHA256、清理后 0 文件、
+  重启 107ms、缺类分类 `missing_class`；`spider-work` 目录创建成功，177/177 自检通过。

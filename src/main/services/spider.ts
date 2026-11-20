@@ -38,6 +38,18 @@ const JVM_ARGS = [
   '-Dfile.encoding=UTF-8'
 ]
 
+/** 不把宿主的 token / API Key / 代理凭据传给第三方 jar */
+const SECRET_ENV = /(TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|COOKIE|SESSION|AUTH|DEEPSEEK|OPENAI|ANTHROPIC|GITHUB|GH_|AWS_|AZURE_|ALIYUN|TENCENT)/i
+
+function sanitizedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || SECRET_ENV.test(key)) continue
+    env[key] = value
+  }
+  return env
+}
+
 interface PendingCall {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -77,6 +89,7 @@ class SpiderHostClient {
   private nextId = 1
   private opened = new Set<string>()
   private idleTimer: NodeJS.Timeout | null = null
+  private timedOut = 0
 
   private touch(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer)
@@ -85,10 +98,25 @@ class SpiderHostClient {
 
   private async start(): Promise<void> {
     if (this.child) return
-    const child = spawn(javaExe(), [...JVM_ARGS, '-cp', classPath(), 'host.SpiderHost'], {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const workDir = join(app.getPath('userData'), 'spider-work')
+    await fs.mkdir(join(workDir, 'tmp'), { recursive: true }).catch(() => undefined)
+    const child = spawn(
+      javaExe(),
+      [
+        ...JVM_ARGS,
+        `-Duser.home=${workDir}`,
+        `-Djava.io.tmpdir=${join(workDir, 'tmp')}`,
+        '-cp',
+        classPath(),
+        'host.SpiderHost'
+      ],
+      {
+        cwd: workDir,
+        env: sanitizedEnv(),
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      }
+    )
     this.child = child
     this.opened.clear()
 
@@ -129,6 +157,7 @@ class SpiderHostClient {
         if (!waiter) return
         this.pending.delete(message.id)
         clearTimeout(waiter.timer)
+        this.timedOut = 0
         if (message.ok) waiter.resolve(message.data)
         else waiter.reject(new Error(message.error || 'Spider 调用失败'))
       })
@@ -136,6 +165,7 @@ class SpiderHostClient {
       child.once('error', (error) => {
         this.child = null
         this.ready = null
+        this.timedOut = 0
         finish(error)
       })
       child.once('exit', () => {
@@ -143,6 +173,7 @@ class SpiderHostClient {
         this.child = null
         this.ready = null
         this.opened.clear()
+        this.timedOut = 0
         for (const waiter of this.pending.values()) {
           clearTimeout(waiter.timer)
           waiter.reject(new Error('Spider 宿主已退出'))
@@ -177,6 +208,12 @@ class SpiderHostClient {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`Spider ${method} 超时（${Math.round(timeoutMs / 1000)}s）`))
+        this.timedOut++
+        if (this.timedOut >= 3) {
+          this.timedOut = 0
+          // 连续超时通常意味着第三方代码卡死；杀掉宿主，下次调用会重新拉起。
+          void this.stop()
+        }
       }, timeoutMs)
       this.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
