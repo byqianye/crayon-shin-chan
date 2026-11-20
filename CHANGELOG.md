@@ -7,6 +7,8 @@
 - 修复大量 jar 在 `init` 阶段直接报 `Stub!` / `NoSuchMethodError` 的问题；
   爱盼/百酷/搬运等使用 `Pan.init` 递归的站点仍会在 Spider 自身逻辑里栈溢出。
 - 连通性测试遇到“首页为空”的 Spider 会再探测一次搜索，避免把只有搜索的站点误判为不可用。
+- 工程：新增 GitHub Actions 的 Windows CI（类型检查、构建、宿主编译、177 项端到端自检）
+  与 tag 触发的发布流水线；发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
 
 ## v0.1.2 — Spider 运行时随包发布
 
@@ -74,7 +76,7 @@
 
 ### 工程
 
-- **端到端自检**：`npm run selftest` 自己起本地桩服务器 + 用 CDP 驱动真实窗口，**177 项断言**覆盖十三个功能块。跑之前备份、跑完还原使用者真实的收藏与观看记录。
+- **端到端自检**：`pnpm selftest` 自己起本地桩服务器 + 用 CDP 驱动真实窗口，**177 项断言**覆盖十三个功能块。跑之前备份、跑完还原使用者真实的收藏与观看记录。
 - **Windows 上的两个坑**：编辑器的原子写会在源码目录留下 `.tmpdir` 临时文件，chokidar 去 watch 它直接抛 `EBUSY` 把 dev server 打挂——配置里显式忽略；改源码只用编辑工具，**绝不用 PowerShell 做读写往返**（会把 UTF-8 编码搞坏）。
 - **截图脚本**：`node scripts/shot.mjs` 走 CDP 按路由截图；截图前注入 `animation:none!important;transition:none!important`，否则窗口不在前台时 `page-in` 入场动画会被冻在中途，看起来像「整体发白」的配色 bug。
 

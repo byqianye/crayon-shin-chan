@@ -26,7 +26,7 @@
 | 归一化 | 已处理别名、季数、画质噪声、解说过滤 | 保留并扩展 |
 | 播放 | ArtPlayer + hls.js、外部播放器探测、解析接口轮询 | 保留 |
 | 直播 | m3u/txt、同名频道合并、线路体检 | 保留 |
-| 自检 | `npm run selftest` 177 项断言 | 扩展 |
+| 自检 | `pnpm selftest` 177 项断言 | 扩展 |
 
 ## 2. 上游项目优点融合矩阵
 
@@ -402,3 +402,23 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
   其余多为源站超时、TLS 或返回非 JSON。
 - 0.1.3 安装包（214,178,504 字节）已安装；安装版实测云集 4K 首页 114 条、
   看球 4 个分类、文才 4 个分类、独播影视 81 条、哔哩合集 23 个分类。
+
+## 16. 发布闭环（2026-11-20）
+
+目标是把「本机能打包」升级成「任何人推一个 tag 就能产出可校验的 Release」。
+
+- `.github/workflows/ci.yml`：三个 Windows 任务（类型/构建/脚本与版本守卫、
+  JDK 17 宿主编译、177 项端到端自检），失败时上传开发窗口日志。
+- `.github/workflows/release.yml`：`v*` tag 或手动触发；用 JDK 17 生成精简 JRE，
+  打包、校验 `latest.yml` 版本、生成 `SHA256SUMS.txt` 与发布说明，最后只创建
+  **draft Release**。已存在的正式 Release 会被拒绝覆盖，资产不足 5 个直接失败。
+- 新增守卫脚本：`release-check.mjs`（版本/CHANGELOG/产物一致性）、
+  `release-notes.mjs`（从 CHANGELOG 生成发布说明）、`check-lockfile.mjs`、
+  `check-ci.mjs`（16 项工作流结构约束）。
+- 统一包管理器：`packageManager: pnpm@11.25.0`，删除过期且包名错误的
+  `package-lock.json`；CI 使用 `pnpm install --frozen-lockfile`。
+- 本地已验证：`actionlint` 对两个工作流报 0 问题；`pnpm@11.25.0` 在只读副本上
+  `--frozen-lockfile` 通过；两个负向用例（版本 0.1.4、CHANGELOG 9.9.9）均以
+  退出码 1 失败；typecheck、build、177/177 自检通过。
+- 尚未完成：没有推送 tag，也没有创建 GitHub Release。正式发布前需要用户在
+  draft 上确认资产与说明。

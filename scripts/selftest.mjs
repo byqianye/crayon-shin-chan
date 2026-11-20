@@ -7,8 +7,8 @@
  *      「加配置源 → 同步 → 站点列表 → 连通性测试 → 搜索 → 详情 → 选集 → 播放器 → 分类浏览」的真实链路。
  *
  * 用法：
- *   终端 A： npm run dev:debug
- *   终端 B： npm run selftest
+ *   终端 A： pnpm dev:debug
+ *   终端 B： pnpm selftest
  *
  * 依赖：samples/selftest-config.json
  */
@@ -27,7 +27,7 @@ let targets
 try {
   targets = await (await fetch(`${CDP}/json`)).json()
 } catch {
-  console.error(`连不上调试端口 ${CDP}。请先用「npm run dev:debug」启动开发窗口。`)
+  console.error(`连不上调试端口 ${CDP}。请先用「pnpm dev:debug」启动开发窗口。`)
   stub.close()
   process.exit(1)
 }

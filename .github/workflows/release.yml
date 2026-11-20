@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: 0.1.3
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+
+jobs:
+  package:
+    name: Windows release assets
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if ($env:REF_TYPE -eq 'tag') {
+            $version = $env:REF_NAME -replace '^v', ''
+            $tag = $env:REF_NAME
+          } elseif ($env:INPUT_VERSION) {
+            $version = $env:INPUT_VERSION -replace '^v', ''
+            $tag = "v$version"
+          } else {
+            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $tag = "v$version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Spider runtime
+        run: |
+          pnpm spider:deps
+          pnpm spider:build
+          pnpm spider:unidbg
+          pnpm spider:runtime
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Package Windows installer
+        run: pnpm build:win
+
+      - name: Verify release package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/release-check.mjs --version $env:RELEASE_VERSION --write-checksums
+
+      - name: Generate release notes
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/release-notes.mjs --version $env:RELEASE_VERSION --write
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CrayonShinChan-${{ steps.version.outputs.version }}
+          path: |
+            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.exe
+            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.exe.blockmap
+            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.zip
+            release/latest.yml
+            release/SHA256SUMS.txt
+            release/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    name: Publish draft GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CrayonShinChan-${{ needs.package.outputs.version }}
+          path: release-assets
+
+      - name: Create or update release draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $notes = Join-Path 'release-assets' 'RELEASE_NOTES.md'
+          if (-not (Test-Path $notes)) { throw '缺少 release-assets/RELEASE_NOTES.md' }
+          $assets = @(
+            'release-assets/CrayonShinChan-*-x64.exe',
+            'release-assets/CrayonShinChan-*-x64.exe.blockmap',
+            'release-assets/CrayonShinChan-*-x64.zip',
+            'release-assets/latest.yml',
+            'release-assets/SHA256SUMS.txt'
+          )
+          $files = Get-ChildItem -Path $assets -File | Select-Object -ExpandProperty FullName
+          if (-not $files) { throw '没有找到可上传的发布资产，拒绝创建空 draft' }
+          if ($files.Count -lt 5) { throw "发布资产不完整（$($files.Count)/5）：$($files -join ', ')" }
+          $existing = gh release view $env:RELEASE_TAG --json isDraft 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG @files --verify-tag --draft --title "蜡笔小新 $env:RELEASE_TAG" --notes-file $notes
+          } else {
+            $view = $existing | ConvertFrom-Json
+            if (-not $view.isDraft) { throw '目标版本已经是正式 Release，拒绝自动覆盖。' }
+            gh release edit $env:RELEASE_TAG --draft --title "蜡笔小新 $env:RELEASE_TAG" --notes-file $notes
+            gh release upload $env:RELEASE_TAG @files --clobber
+          }

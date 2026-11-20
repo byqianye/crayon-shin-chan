@@ -5,4 +5,4 @@
 *.ico binary
 *.woff binary
 *.woff2 binary
-package-lock.json -diff linguist-generated
+pnpm-lock.yaml -diff linguist-generated

@@ -63,7 +63,7 @@ pnpm install          # 首次安装会自动补下载 Electron 二进制（走 
 pnpm dev              # 启动开发窗口
 ```
 
-项目同时保留 `package-lock.json` 与 `pnpm-lock.yaml`；用 `npm install` / `npm run dev` 也可以。
+项目使用 `pnpm@11.25.0` 并提交 `pnpm-lock.yaml`；CI 通过 `pnpm install --frozen-lockfile` 安装依赖。
 
 ## Spider 支持
 
@@ -124,6 +124,7 @@ node node_modules/electron/install.js
 | `pnpm typecheck` | 主进程与渲染进程双工程类型检查 |
 | `pnpm build` | 产出 `out/`（主进程 / preload / 渲染进程） |
 | `pnpm build:win` | electron-builder 打包出 NSIS 安装包与免安装 zip |
+| `pnpm release:check` | 校验 `package.json`、`CHANGELOG.md`、`latest.yml` 与产物版本一致，可生成 `SHA256SUMS.txt` |
 
 打包会先跑 `electron-vite build`，再由 electron-builder 把产物写到 `release/`：NSIS 安装包、免安装 zip、以及 `latest.yml`（增量更新元数据）。国内网络下要给 builder 自己的二进制也指个镜像，否则下载 nsis / 7zip 会卡住：
 
@@ -137,6 +138,26 @@ pnpm build:win
 ```bash
 node scripts/make-icon.mjs
 ```
+
+## CI 与发布
+
+`.github/workflows/ci.yml` 在每次 push 与 PR 时跑三个 Windows 任务：
+
+- 类型检查、生产构建、全部脚本语法检查、版本与 CHANGELOG 同步校验；
+- 用 JDK 17 编译 Spider 宿主与 unidbg 桥，并断言 `out/`、`lib/`、`dex-tools/` 产物齐全；
+- 启动 `dev:debug` 后跑 177 项端到端自检，失败时上传开发窗口日志。
+
+发布走 `.github/workflows/release.yml`：推 `v*` tag 后，它用与 CI 相同的 JDK 17 编译 Spider 运行时、打包、校验产物与 `latest.yml` 版本、生成 `SHA256SUMS.txt` 和发布说明，再创建一个 **draft Release**。draft 需要人工复查后手动发布，工作流不会把版本直接转成正式 Release。
+
+本地预演同一套检查：
+
+```powershell
+pnpm build:win
+pnpm release:check --write-checksums
+node scripts/release-notes.mjs --version 0.1.3 --write
+```
+
+产物是 200MB 级的安装包，因此 Release 资产由工作流上传，不提交进 Git。
 
 
 ## 目录结构

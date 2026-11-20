@@ -12,7 +12,7 @@
  * 播放页，先用 eval.mjs 搜一次再带着 --keep 拍。
  *
  * 前置：
- *   1. 另一个终端跑着 npm run dev:debug
+ *   1. 另一个终端跑着 pnpm dev:debug
  *   2. 应用里已添加配置源；--keep 模式下还需要先跑过搜索
  */
 import { writeFileSync } from 'node:fs'

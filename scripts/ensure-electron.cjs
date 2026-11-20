@@ -5,7 +5,7 @@
  * （表现为 `Error: Electron uninstall` 或 `TypeError: terminated`）。
  * 这里统一走 npmmirror 镜像，并且只在缺少二进制时才触发下载。
  *
- * 想换镜像：设置环境变量 ELECTRON_MIRROR 后再执行 npm install。
+ * 想换镜像：设置环境变量 ELECTRON_MIRROR 后再执行 pnpm install。
  */
 const fs = require('node:fs')
 const path = require('node:path')
@@ -36,7 +36,7 @@ try {
 } catch {
   console.error(
     '[ensure-electron] 下载失败。请设置 ELECTRON_MIRROR 指向可用镜像后重试，例如：\n' +
-      '  $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"; npm install'
+      '  $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"; pnpm install'
   )
   process.exit(1)
 }

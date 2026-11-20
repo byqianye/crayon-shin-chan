@@ -4,7 +4,7 @@
  * 用法： node scripts/eval.mjs "document.title"
  *        node scripts/eval.mjs --goto "#/sites" "document.querySelectorAll('.list-row').length"
  *
- * 前置：另一个终端跑着 npm run dev:debug
+ * 前置：另一个终端跑着 pnpm dev:debug
  */
 const CDP = 'http://127.0.0.1:9222'
 const argv = process.argv.slice(2)
@@ -25,7 +25,7 @@ for (let i = 0; i < argv.length; i++) {
 const targets = await (await fetch(`${CDP}/json`)).json()
 const page = targets.find((t) => t.type === 'page' && /localhost:5173/.test(t.url)) ?? targets.find((t) => t.type === 'page')
 if (!page) {
-  console.error('调试端口里没有页面目标，请先 npm run dev:debug')
+  console.error('调试端口里没有页面目标，请先 pnpm dev:debug')
   process.exit(1)
 }
 

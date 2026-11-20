@@ -2,7 +2,7 @@
  * 把一个本地配置 JSON 推进正在运行的应用里，然后逐站测试、真搜一次。
  *
  * 用法： node scripts/apply-sources.mjs samples/public-sources.json [关键词]
- * 前置： 另一个终端跑着 npm run dev:debug，且桩服务器不需要（这里打的是真站点）
+ * 前置： 另一个终端跑着 pnpm dev:debug，且桩服务器不需要（这里打的是真站点）
  */
 const CDP = 'http://127.0.0.1:9222'
 const configPath = process.argv[2]
@@ -17,7 +17,7 @@ const page =
   targets.find((t) => t.type === 'page' && /localhost:5173/.test(t.url)) ??
   targets.find((t) => t.type === 'page')
 if (!page) {
-  console.error('调试端口里没有页面目标，请先 npm run dev:debug')
+  console.error('调试端口里没有页面目标，请先 pnpm dev:debug')
   process.exit(1)
 }
 
