@@ -438,3 +438,17 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - 2026-11-20 本机首轮真实矩阵（关键词「电影」）：`usable=1`（Ikanbot）、
   `search_empty_category_ok=1`（New6v：分类 18 条、详情 1 线 1 集、播放返回
   解析页）、`empty_search=13`。源站波动大，这组数字只代表当次，不承诺当前可用性。
+
+## 18. Spider 产品闭环（2026-11-20）
+
+- `home.ts`：配置 `home.sections` 现在可以引用 Spider 站点；有 `typeId` 时走
+  宿主 `category`，没有时走 `home`，结果转成统一 `Vod`。没有 CMS 源时，默认取
+  前 8 个已启用 Spider 站点各给一屏，避免一次拉起几十个 JVM 站点。
+- `category.ts`：分类树从 Spider `home.class` 归一化；分类浏览走宿主 `category`，
+  同一站点的多个叶子 id 分别请求后交替合并。
+- 影视源页：每个 Spider 显示缓存字节数和 raw jar 的 SHA256；支持单站/全部清理
+  缓存、重新准备运行时；连通性测试失败增加缺类、Android API、native、超时、
+  TLS、空播放字段等分类。
+- 实测（隔离数据目录 + XYQ.jar + Ikanbot）：首页内容位 24 条、分类「电影/电影」
+  24 条、缓存 1.30MB / SHA256 `ace8cb39…`、清理后 0 文件、重启宿主 107ms、
+  缺类站点返回 `ClassNotFoundException` 且分类为 `missing_class`；177/177 自检通过。

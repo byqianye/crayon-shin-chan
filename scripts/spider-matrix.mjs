@@ -277,7 +277,14 @@ async function main() {
   const home = await step('home', () => spider.spiderCall(site, 'home', { filter: true }, timeoutMs))
   if (home !== undefined) {
     if (!home || typeof home !== 'object') Object.assign(record.actions.home, { type: typeOf(home), raw: String(home).slice(0, 300) })
-    else Object.assign(record.actions.home, { type: 'object', classes: Array.isArray(home.class) ? home.class.length : 0, list: Array.isArray(home.list) ? home.list.length : 0 })
+    else Object.assign(record.actions.home, {
+      type: 'object',
+      classes: Array.isArray(home.class) ? home.class.length : 0,
+      list: Array.isArray(home.list) ? home.list.length : 0,
+      sample: Array.isArray(home.class)
+        ? home.class.slice(0, 5).map((c) => ({ id: String(c.type_id || c.id || ''), name: String(c.type_name || c.name || '') }))
+        : []
+    })
   } else {
     Object.assign(record.actions.home, { count: 0, raw: 'undefined' })
   }

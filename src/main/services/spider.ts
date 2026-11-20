@@ -1,13 +1,16 @@
 import { app } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type {
   ParseResult,
   Site,
+  SpiderCacheInfo,
+  SpiderCacheSite,
+  SpiderFailureKind,
   SpiderProbeResult,
   SpiderRuntimeStatus,
   Vod
@@ -234,8 +237,24 @@ class SpiderHostClient {
     } catch {
       // 管道已关闭
     }
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    if (!child.killed) child.kill()
+    await new Promise<void>((resolve) => {
+      if (child.exitCode !== null) return resolve()
+      const timer = setTimeout(() => {
+        if (child.exitCode === null) {
+          try {
+            child.kill()
+          } catch {
+            // 进程已经退出
+          }
+        }
+        resolve()
+      }, 2000)
+      child.once('exit', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    if (child.exitCode === null) child.kill()
   }
 
   /** 只验证 JVM 与宿主协议能跑通，不加载任何站点 */
@@ -253,6 +272,11 @@ interface SpiderArtifacts {
 }
 
 const preparing = new Map<string, Promise<SpiderArtifacts>>()
+
+/** 缓存键必须和 prepareSpiderJar 的计算方式一致 */
+export function spiderCacheKey(site: Pick<Site, 'sourceId' | 'jar'>): string {
+  return createHash('md5').update(`${site.sourceId}|${(site.jar ?? '').trim()}`).digest('hex')
+}
 
 function findDexToolsLib(): string {
   const configured = process.env.SPIDER_DEX_TOOLS
@@ -316,7 +340,7 @@ async function runDex2Jar(input: string, output: string): Promise<void> {
 async function prepareSpiderJar(site: Site): Promise<SpiderArtifacts> {
   const raw = (site.jar ?? '').trim()
   if (!raw) throw new Error('配置没有提供 spider 文件')
-  const key = createHash('md5').update(`${site.sourceId}|${raw}`).digest('hex')
+  const key = spiderCacheKey(site)
   const existing = preparing.get(key)
   if (existing) return existing
 
@@ -572,6 +596,119 @@ export async function spiderPlayerUrl(site: Site, flag: string, id: string): Pro
 
 export async function stopSpiderHost(): Promise<void> {
   await host.stop()
+}
+
+/** 读取 spider-cache 目录与每个 Spider 站点的 jar 哈希；不启动 JVM。 */
+export async function getSpiderCacheInfo(sites: Site[]): Promise<SpiderCacheInfo> {
+  const dir = join(app.getPath('userData'), 'spider-cache')
+  let entries: Array<{ name: string; isFile: () => boolean }> = []
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    // 目录还没建
+  }
+
+  let files = 0
+  let bytes = 0
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    files++
+    try {
+      bytes += (await fs.stat(join(dir, entry.name))).size
+    } catch {
+      // 文件刚好被清理
+    }
+  }
+
+  const cacheSites: SpiderCacheSite[] = []
+  const hashByKey = new Map<string, { sha256: string; bytes: number; preparedAt: number }>()
+  for (const site of sites) {
+    if (!site.spiderClass || !site.jar) continue
+    const key = spiderCacheKey(site)
+    const rawPath = join(dir, `${key}.raw.zip`)
+    const jarPath = join(dir, `${key}.jar`)
+    const file = existsSync(rawPath) ? rawPath : existsSync(jarPath) ? jarPath : ''
+    if (!file) {
+      cacheSites.push({ siteKey: site.key, siteName: site.name, cached: false, bytes: 0 })
+      continue
+    }
+    let digest = hashByKey.get(key)
+    if (!digest) {
+      let siteBytes = 0
+      for (const path of [rawPath, jarPath]) {
+        if (existsSync(path)) siteBytes += (await fs.stat(path)).size
+      }
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(file)) hash.update(chunk)
+      digest = {
+        sha256: hash.digest('hex'),
+        bytes: siteBytes,
+        preparedAt: (await fs.stat(file)).mtimeMs
+      }
+      hashByKey.set(key, digest)
+    }
+    cacheSites.push({
+      siteKey: site.key,
+      siteName: site.name,
+      cached: true,
+      bytes: digest.bytes,
+      sha256: digest.sha256,
+      preparedAt: digest.preparedAt
+    })
+  }
+  return { dir, files, bytes, sites: cacheSites }
+}
+
+/**
+ * 清理 Spider 缓存。传 siteKey 只删这个站点的 jar/raw；不传则清空整个
+ * spider-cache（含 FishGuard 解出的 ext 缓存）。清理前先停 JVM，避免 Windows
+ * 上文件仍被 classloader 占用。
+ */
+export async function clearSpiderCache(sites: Site[], siteKey?: string): Promise<SpiderCacheInfo> {
+  await host.stop()
+  const dir = join(app.getPath('userData'), 'spider-cache')
+  const selected = siteKey ? sites.filter((site) => site.key === siteKey) : sites
+  if (siteKey && !selected.length) return getSpiderCacheInfo(sites)
+  const keys = new Set(
+    selected.filter((site) => site.spiderClass && site.jar).map((site) => spiderCacheKey(site))
+  )
+  let entries: string[] = []
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return getSpiderCacheInfo(sites)
+  }
+  for (const name of entries) {
+    const matches = !siteKey || [...keys].some((key) => name.startsWith(key))
+    if (!matches) continue
+    const path = join(dir, name)
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        await fs.unlink(path)
+        break
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+    }
+  }
+  return getSpiderCacheInfo(sites)
+}
+
+/** 失败分类。只按错误文本归类，不把未知错误硬塞成某个已知类型。 */
+export function classifySpiderFailure(message: string): SpiderFailureKind {
+  const text = message || ''
+  if (/ClassNotFoundException|NoClassDefFoundError|Class not found|Could not find class/i.test(text)) {
+    return 'missing_class'
+  }
+  if (/not a Spider subclass/i.test(text)) return 'wrong_type'
+  if (/UnsatisfiedLinkError|loadLibrary|native-lib|\.so\b/i.test(text)) return 'native'
+  if (/NoSuchMethodError|Stub!|AbstractMethodError|NoSuchFieldError/i.test(text)) return 'android_api'
+  if (/SSLHandshakeException|SSLException|PKIX|certificate|TLS/i.test(text)) return 'tls'
+  if (/timeout|timed out|超时/i.test(text)) return 'timeout'
+  if (/解析页|需要继续走解析/i.test(text)) return 'parse_required'
+  if (/HTTP \d|请求失败|网络|fetch failed/i.test(text)) return 'http'
+  if (/没有返回|为空|empty/i.test(text)) return 'empty_search'
+  return 'unknown'
 }
 
 /**

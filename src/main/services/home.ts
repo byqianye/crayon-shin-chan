@@ -5,6 +5,7 @@ import { cmsItemToVod } from './search'
 import { getSettings } from './settings'
 import { getSites, resolveHeader } from './sites'
 import { getParsed, listSources } from './sources'
+import { spiderCall, spiderItemToVod } from './spider'
 
 /** 每个内容位最多放多少条。首页是横向滑动的，太多没必要，也省流量 */
 const LIMIT = 24
@@ -44,7 +45,15 @@ function matchSite(sites: Site[], ref: string): Site | undefined {
   )
 }
 
-/** 只对苹果CMS 类型的站点拉内容：网页规则站的「最近更新」得靠 HTML 规则，暂时不做 */
+/** 苹果CMS 站点走 HTTP；Spider 站点走 JVM。网页规则站的「最近更新」暂时不做。 */
+function isContentSite(site: Site): boolean {
+  return (
+    site.enabled &&
+    !site.unsupported &&
+    (Boolean(site.spiderClass) || ((site.type === 3 || site.type === 4) && Boolean(site.api)))
+  )
+}
+
 function isCms(site: Site): boolean {
   return (
     (site.type === 3 || site.type === 4) &&
@@ -80,7 +89,7 @@ async function buildPlan(): Promise<{ plans: Plan[]; missing: HomeSection[] }> {
         })
         continue
       }
-      if (!isCms(site)) {
+      if (!isContentSite(site)) {
         missing.push({
           key: `unsupported:${source.id}:${site.key}`,
           title: title || site.name,
@@ -88,7 +97,7 @@ async function buildPlan(): Promise<{ plans: Plan[]; missing: HomeSection[] }> {
           siteKey: site.key,
           siteName: site.name,
           items: [],
-          error: `${site.name} 不是苹果CMS 类型，首页内容位暂时只支持这类源`
+          error: `${site.name} 不是可用的苹果CMS / Spider 源，首页内容位暂不支持`
         })
         continue
       }
@@ -118,6 +127,17 @@ async function buildPlan(): Promise<{ plans: Plan[]; missing: HomeSection[] }> {
         site
       })
     }
+    // 只有 Spider 源的配置也给一屏；限制条数，避免一次拉起几十个 JVM 站点。
+    if (!plans.length) {
+      for (const site of sites.filter((s) => s.spiderClass && isContentSite(s)).slice(0, 8)) {
+        plans.push({
+          key: `${site.key}::latest`,
+          title: `${site.name} · 最近更新`,
+          origin: 'default',
+          site
+        })
+      }
+    }
   }
 
   return { plans, missing }
@@ -132,6 +152,21 @@ async function loadSection(plan: Plan): Promise<HomeSection> {
     siteName: plan.site.name
   }
   try {
+    if (plan.site.spiderClass) {
+      const payload = plan.typeId
+        ? await spiderCall<{ list?: unknown[] }>(
+            plan.site,
+            'category',
+            { tid: plan.typeId, pg: '1', filter: true, extend: {} },
+            120_000
+          )
+        : await spiderCall<{ list?: unknown[] }>(plan.site, 'home', { filter: true }, 120_000)
+      const items = asArray<Record<string, unknown>>(payload?.list)
+        .slice(0, LIMIT)
+        .map((item) => spiderItemToVod(item, plan.site))
+      if (!items.length) return { ...base, items: [], error: '这一个内容位没有返回数据' }
+      return { ...base, items }
+    }
     // ac=detail 会连 vod_play_url 一起带回来，点进详情就不用再请求一次
     const url = plan.typeId
       ? buildCmsBrowseUrl(plan.site, 'detail', [plan.typeId], 1)

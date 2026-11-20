@@ -113,6 +113,10 @@ pnpm spider:matrix --out "$env:TEMP\spider-reports"
 
 分类口径和用例说明见 [`spider-tests/README.md`](spider-tests/README.md)。
 
+### Spider 产品闭环
+
+Spider 站点不只是能搜索：启用后会进入首页内容位（配置 `home.sections` 里可以按 key / 中文名引用）和聚合分类浏览（用宿主返回的 `class` 树归并到统一大类）。影视源页会显示每个 Spider 的缓存大小与 jar SHA256，支持单站/全部清理缓存、重新准备运行时；连通性测试失败会标出缺类、Android API、native 加固、超时、TLS、空播放字段等分类。
+
 当前边界：依赖 WebView 的 Spider、Python/JS Spider、`DexNative` 加固类和
 会自递归调用 `Pan.init` 的站点仍可能失败；失败原因会在影视源页或日志中明确显示。
 

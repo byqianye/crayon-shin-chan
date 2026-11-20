@@ -24,6 +24,9 @@ export const IPC = {
   sitesIgnore: 'sites:ignore',
   spiderStatus: 'spider:status',
   spiderProbe: 'spider:probe',
+  spiderCache: 'spider:cache',
+  spiderClearCache: 'spider:clear-cache',
+  spiderRestart: 'spider:restart',
 
   localSitesList: 'local-sites:list',
   localSitesAdd: 'local-sites:add',

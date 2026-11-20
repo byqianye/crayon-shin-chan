@@ -7,7 +7,7 @@ import { listLocalSites, localToSite } from './localSites'
 import { listTombstones } from './tombstones'
 import { getSettings } from './settings'
 import { getParsed, listSources } from './sources'
-import { prewarmSpider, spiderCall, spiderSearch } from './spider'
+import { classifySpiderFailure, prewarmSpider, spiderCall, spiderSearch } from './spider'
 import { readStore, writeStore } from './store'
 
 const NAME = 'sites'
@@ -163,7 +163,12 @@ export async function testSite(key: string): Promise<TestResult> {
           if (hits) break
         }
         if (!hits) {
-          return { ok: false, ms: Date.now() - start, message: 'Spider 连通，但首页和搜索都没有返回内容' }
+          return {
+            ok: false,
+            ms: Date.now() - start,
+            message: 'Spider 连通，但首页和搜索都没有返回内容',
+            category: 'empty_search'
+          }
         }
         await saveHealth(key, Date.now() - start)
         return {
@@ -228,7 +233,13 @@ export async function testSite(key: string): Promise<TestResult> {
     return { ok: false, ms: 0, message: site.unsupported ?? '该类型暂不支持测试' }
   } catch (err) {
     await saveHealth(key, -1)
-    return { ok: false, ms: Date.now() - start, message: (err as Error).message }
+    const message = (err as Error).message
+    return {
+      ok: false,
+      ms: Date.now() - start,
+      message,
+      category: site.spiderClass ? classifySpiderFailure(message) : undefined
+    }
   }
 }
 

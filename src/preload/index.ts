@@ -30,6 +30,7 @@ import type {
   SearchProgress,
   SearchResponse,
   Site,
+  SpiderCacheInfo,
   SpiderProbeResult,
   SpiderRuntimeStatus,
   TestResult,
@@ -77,7 +78,11 @@ const api = {
 
   spider: {
     status: (): Promise<SpiderRuntimeStatus> => ipcRenderer.invoke(IPC.spiderStatus),
-    probe: (): Promise<SpiderProbeResult> => ipcRenderer.invoke(IPC.spiderProbe)
+    probe: (): Promise<SpiderProbeResult> => ipcRenderer.invoke(IPC.spiderProbe),
+    cache: (): Promise<SpiderCacheInfo> => ipcRenderer.invoke(IPC.spiderCache),
+    clearCache: (siteKey?: string): Promise<SpiderCacheInfo> =>
+      ipcRenderer.invoke(IPC.spiderClearCache, siteKey),
+    restart: (): Promise<SpiderProbeResult> => ipcRenderer.invoke(IPC.spiderRestart)
   },
 
   localSites: {

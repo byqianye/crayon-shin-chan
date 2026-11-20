@@ -15,6 +15,9 @@
 - 工程：新增 Spider 真实性矩阵。每次 CI 跑 10 个合成契约用例，覆盖缺类、Android API、
   native 加固、超时、TLS、空播放字段、非法 JSON 等分类；每周定时跑 15 个真实
   `csp_*` 类并上传 Markdown/JSON 报告，真实源波动不阻塞提交。
+- Spider 产品闭环：宿主 `home` / `category` 已接入首页内容位与聚合分类浏览；
+  影视源页显示缓存大小、jar SHA256，支持单站/全部清理缓存和重新准备运行时；
+  测试失败按缺类、Android API、native、超时、TLS、空播放字段等分类展示。
 
 ## v0.1.2 — Spider 运行时随包发布
 

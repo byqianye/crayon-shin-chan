@@ -58,6 +58,36 @@ export interface SpiderProbeResult {
   message: string
 }
 
+export interface SpiderCacheSite {
+  siteKey: string
+  siteName: string
+  cached: boolean
+  bytes: number
+  sha256?: string
+  preparedAt?: number
+}
+
+export interface SpiderCacheInfo {
+  dir: string
+  files: number
+  bytes: number
+  sites: SpiderCacheSite[]
+}
+
+export type SpiderFailureKind =
+  | 'missing_class'
+  | 'wrong_type'
+  | 'android_api'
+  | 'native'
+  | 'timeout'
+  | 'tls'
+  | 'empty_home'
+  | 'empty_search'
+  | 'empty_play_fields'
+  | 'parse_required'
+  | 'http'
+  | 'unknown'
+
 /** 手动添加的单个影视源（不依赖订阅配置） */
 export interface LocalSite {
   key: string
@@ -516,6 +546,8 @@ export interface TestResult {
   ms: number
   message: string
   sample?: string
+  /** Spider 失败分类；非 Spider 站点为空 */
+  category?: SpiderFailureKind
 }
 
 /* ---------- M2：聚合搜索 / 详情 / 播放 ---------- */

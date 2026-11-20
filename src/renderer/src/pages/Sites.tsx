@@ -3,6 +3,8 @@ import type {
   AuditResult,
   Site,
   SiteType,
+  SpiderCacheInfo,
+  SpiderFailureKind,
   SpiderProbeResult,
   SpiderRuntimeStatus
 } from '@shared/types'
@@ -21,6 +23,28 @@ const TYPE_OPTIONS: { value: SiteType; label: string }[] = [
   { value: 4, label: 'JSON 接口' },
   { value: 1, label: '网页规则' }
 ]
+
+const SPIDER_FAILURE_LABEL: Record<SpiderFailureKind, string> = {
+  missing_class: '缺类',
+  wrong_type: '类型不对',
+  android_api: 'Android API',
+  native: 'native 加固',
+  timeout: '超时',
+  tls: 'TLS/证书',
+  empty_home: '首页为空',
+  empty_search: '搜索为空',
+  empty_play_fields: '空播放字段',
+  parse_required: '需解析',
+  http: 'HTTP/网络',
+  unknown: '未知'
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
 
 function detectHint(detected: DetectResult | null): string {
   if (!detected) return ''
@@ -61,11 +85,14 @@ export function Sites(): JSX.Element {
   const [sourceFilter, setSourceFilter] = useState<string>('all')
   const [onlyEnabled, setOnlyEnabled] = useState(false)
   const [testing, setTesting] = useState<Record<string, boolean>>({})
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({})
+  const [testResults, setTestResults] = useState<
+    Record<string, { ok: boolean; text: string; category?: SpiderFailureKind }>
+  >({})
   const [healthMap, setHealthMap] = useState<Record<string, HealthSummary>>({})
   const [audits, setAudits] = useState<Record<string, AuditResult | 'running'>>({})
   const [spiderStatus, setSpiderStatus] = useState<SpiderRuntimeStatus | null>(null)
   const [spiderProbe, setSpiderProbe] = useState<SpiderProbeResult | 'running' | null>(null)
+  const [spiderCache, setSpiderCache] = useState<SpiderCacheInfo | null>(null)
 
   const [showAdd, setShowAdd] = useState(false)
   const [addMode, setAddMode] = useState<'single' | 'batch'>('single')
@@ -114,6 +141,10 @@ export function Sites(): JSX.Element {
     void window.api.spider
       .status()
       .then(setSpiderStatus)
+      .catch(() => undefined)
+    void window.api.spider
+      .cache()
+      .then(setSpiderCache)
       .catch(() => undefined)
   }, [])
 
@@ -231,10 +262,16 @@ export function Sites(): JSX.Element {
         ...h,
         [site.key]: {
           ok: result.ok,
-          text: result.ok ? `${result.ms}ms · ${result.message}` : result.message
+          text: result.ok
+            ? `${result.ms}ms · ${result.message}`
+            : `${result.category ? `${SPIDER_FAILURE_LABEL[result.category]} · ` : ''}${result.message}`,
+          category: result.category
         }
       }))
-      if (!result.ok) notify(`${site.name}：${result.message}`, 'warn')
+      if (!result.ok) {
+        const label = result.category ? `${SPIDER_FAILURE_LABEL[result.category]} · ` : ''
+        notify(`${site.name}：${label}${result.message}`, 'warn')
+      }
     } finally {
       setTesting((t) => {
         const next = { ...t }
@@ -315,6 +352,43 @@ export function Sites(): JSX.Element {
     setSpiderProbe('running')
     try {
       const result = await window.api.spider.probe()
+      setSpiderProbe(result)
+      notify(result.message, result.ok ? 'success' : 'danger')
+    } catch (err) {
+      const result = { ok: false, ms: 0, message: (err as Error).message }
+      setSpiderProbe(result)
+      notify(result.message, 'danger')
+    }
+  }
+
+  async function clearSpiderCache(): Promise<void> {
+    if (!window.confirm('清理 Spider 缓存会删除已下载/转换的 jar，下次使用时会重新下载并转换。继续？')) {
+      return
+    }
+    try {
+      const info = await window.api.spider.clearCache()
+      setSpiderCache(info)
+      notify('Spider 缓存已清理', 'success')
+    } catch (err) {
+      notify(`清理缓存失败：${(err as Error).message}`, 'danger')
+    }
+  }
+
+  async function clearSiteCache(site: Site): Promise<void> {
+    if (!window.confirm(`清理「${site.name}」的 Spider 缓存？下次使用时会重新下载并转换。`)) return
+    try {
+      const info = await window.api.spider.clearCache(site.key)
+      setSpiderCache(info)
+      notify(`已清理 ${site.name} 的 Spider 缓存`, 'success')
+    } catch (err) {
+      notify(`清理缓存失败：${(err as Error).message}`, 'danger')
+    }
+  }
+
+  async function restartSpiderRuntime(): Promise<void> {
+    setSpiderProbe('running')
+    try {
+      const result = await window.api.spider.restart()
       setSpiderProbe(result)
       notify(result.message, result.ok ? 'success' : 'danger')
     } catch (err) {
@@ -431,6 +505,12 @@ export function Sites(): JSX.Element {
                 自检：{spiderProbe.message}（{spiderProbe.ms}ms）
               </span>
             ) : null}
+            {spiderCache ? (
+              <span className="text-3">
+                {' '}
+                · 缓存 {formatBytes(spiderCache.bytes)} / {spiderCache.files} 个文件
+              </span>
+            ) : null}
           </span>
           <button
             type="button"
@@ -439,6 +519,17 @@ export function Sites(): JSX.Element {
             onClick={() => void probeSpiderRuntime()}
           >
             {spiderProbe === 'running' ? <span className="spin" /> : null} 运行时自检
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => void clearSpiderCache()}>
+            <Icon name="trash" size={13} /> 清理缓存
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={spiderProbe === 'running'}
+            onClick={() => void restartSpiderRuntime()}
+          >
+            <Icon name="refresh" size={13} /> 重新准备运行时
           </button>
         </div>
       ) : null}
@@ -570,6 +661,16 @@ export function Sites(): JSX.Element {
                         <span className="mono">{site.api}</span>
                         <span style={{ margin: '0 8px' }}>·</span>
                         内置 JVM 运行，{site.enabled ? '已启用' : '开启开关后可用'}
+                        {(() => {
+                          const cached = spiderCache?.sites.find((item) => item.siteKey === site.key)
+                          if (!cached?.cached) return <span> · 尚未缓存</span>
+                          return (
+                            <span className="text-3">
+                              {' '}
+                              · 缓存 {formatBytes(cached.bytes)} · SHA256 {cached.sha256?.slice(0, 12)}…
+                            </span>
+                          )
+                        })()}
                       </span>
                     ) : (
                       <span className="mono">{site.api || '未配置接口'}</span>
@@ -625,6 +726,11 @@ export function Sites(): JSX.Element {
                   >
                     {testing[site.key] ? <span className="spin" /> : null} 测试
                   </button>
+                  {site.spiderClass ? (
+                    <button type="button" className="btn btn-sm" onClick={() => void clearSiteCache(site)}>
+                      清缓存
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-sm"

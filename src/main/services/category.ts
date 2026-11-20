@@ -4,6 +4,7 @@ import { fetchText, parseLooseJson } from './http'
 import { cmsItemToVod } from './search'
 import { getSettings } from './settings'
 import { getSites, resolveHeader } from './sites'
+import { spiderCall, spiderItemToVod } from './spider'
 
 /**
  * 分类浏览。
@@ -256,11 +257,22 @@ async function loadClasses(site: Site): Promise<SiteClass[]> {
 
   const task = (async (): Promise<SiteClass[]> => {
     try {
-      const url = buildCmsUrl(site, { ac: 'list' })
-      const text = await fetchText(url, { header: await resolveHeader(site, url) })
-      const payload = parseLooseJson(text)
-      if (!isCmsOk(payload)) return []
-      const classes = normalizeClasses((payload as Record<string, unknown>).class)
+      let classes: SiteClass[]
+      if (site.spiderClass) {
+        const payload = await spiderCall<{ class?: unknown }>(
+          site,
+          'home',
+          { filter: true },
+          120_000
+        )
+        classes = normalizeClasses(payload?.class)
+      } else {
+        const url = buildCmsUrl(site, { ac: 'list' })
+        const text = await fetchText(url, { header: await resolveHeader(site, url) })
+        const payload = parseLooseJson(text)
+        if (!isCmsOk(payload)) return []
+        classes = normalizeClasses((payload as Record<string, unknown>).class)
+      }
       // 期间换过配置源就别写回缓存了，否则上一套源的分类树会盖住新的
       if (gen === categoryGeneration) classCache.set(site.key, { at: Date.now(), classes })
       return classes
@@ -279,7 +291,7 @@ async function loadClasses(site: Site): Promise<SiteClass[]> {
 /** 汇总各站点的分类，按「大类 → 子分类」归并后返回目录 */
 export async function listCategories(): Promise<CategoryBucket[]> {
   const sites = (await getSites()).filter(
-    (s) => s.enabled && (s.type === 3 || s.type === 4) && !s.spiderClass
+    (s) => s.enabled && !s.unsupported && (s.spiderClass || s.type === 3 || s.type === 4)
   )
   const trees = await Promise.all(
     sites.map(async (site) => ({ site, classes: await loadClasses(site) }))
@@ -341,6 +353,51 @@ async function browseSite(
 ): Promise<SitePage> {
   const started = Date.now()
   try {
+    if (site.spiderClass) {
+      const settled = await Promise.allSettled(
+        typeIds.map((tid) =>
+          spiderCall<Record<string, unknown>>(
+            site,
+            'category',
+            { tid, pg: String(page), filter: true, extend: {} },
+            120_000
+          )
+        )
+      )
+      const pages = settled
+        .filter((item): item is PromiseFulfilledResult<Record<string, unknown>> => item.status === 'fulfilled')
+        .map((item) => item.value)
+      if (!pages.length) {
+        const first = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected')
+        throw first?.reason instanceof Error ? first.reason : new Error('Spider 分类请求全部失败')
+      }
+      const lists = pages.map((body) =>
+        asArray<Record<string, unknown>>(body?.list)
+          .slice(0, limit)
+          .map((item) => spiderItemToVod(item, site))
+          .filter((item) => item.vod_id && item.vod_name)
+      )
+      const list = interleave(lists).slice(0, limit)
+      const ms = Date.now() - started
+      const reported = pages
+        .map((body) => Number(body?.pagecount ?? body?.pageCount ?? body?.total))
+        // 有些 Spider 用 Integer.MAX_VALUE 表示「未知/无限」，不能直接信。
+        .filter((n) => Number.isFinite(n) && n > 0 && n <= 1000)
+      const pageCount = reported.length ? Math.max(...reported) : list.length ? page + 1 : page
+      if (!list.length) return { result: fail(site, '这个分类下没有返回内容', ms), pageCount }
+      return {
+        result: {
+          siteKey: site.key,
+          siteName: site.name,
+          ok: true,
+          ms,
+          message: `返回 ${list.length} 条`,
+          list
+        },
+        pageCount
+      }
+    }
+
     // ac=detail 会把 vod_play_url 一起带回来，详情页就不用再请求一次
     const url = buildCmsBrowseUrl(site, 'detail', typeIds, page)
     const text = await fetchText(url, { header: await resolveHeader(site, url) })
