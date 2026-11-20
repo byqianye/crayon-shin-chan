@@ -185,20 +185,25 @@ try {
   await check('HTTP aborts promptly and preserves AbortError', async () => {
     const controller = new AbortController()
     const start = performance.now()
+    let abortedAt = 0
     const pending = svc.http.fetchText(base + '/json?wd=slow', { signal: controller.signal, timeout: 3 })
-    setTimeout(() => controller.abort(), 80)
+    // CI 可能延迟调度定时器；取消耗时从实际发出 abort 时开始计算。
+    setTimeout(() => { abortedAt = performance.now(); controller.abort() }, 80)
     await assert.rejects(pending, { name: 'AbortError' })
-    assert(performance.now() - start < 500)
+    const elapsed = performance.now() - abortedAt
+    assert(abortedAt > start)
+    assert(elapsed < 500, 'abort settled in ' + Math.round(elapsed) + 'ms; timer delay ' + Math.round(abortedAt - start) + 'ms')
   })
   await check('Search cancellation closes sockets without penalizing health', async () => {
     slowClosed = false
-    const start = performance.now()
+    let cancelledAt = 0
     const pending = svc.search.searchAll('slow', { sites: ['json'] })
-    setTimeout(() => svc.search.cancelSearch(), 100)
+    setTimeout(() => { cancelledAt = performance.now(); svc.search.cancelSearch() }, 100)
     const result = await pending
     await new Promise((resolve) => setTimeout(resolve, 40))
     assert.equal(result.results.length, 0)
-    assert(performance.now() - start < 600, 'cancel waited for upstream timeout')
+    assert(cancelledAt > 0)
+    assert(performance.now() - cancelledAt < 500, 'cancel waited for upstream timeout')
     assert.equal(slowClosed, true)
     assert.equal((await svc.store.readStore('health', {})).json.consecutiveFails, 0)
   })
