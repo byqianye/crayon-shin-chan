@@ -1,0 +1,33 @@
+appId: com.crayonshinchan.desktop
+productName: 蜡笔小新
+copyright: Copyright © 2026 蜡笔小新
+
+# 精简版：只带 Electron/Node 与前端产物，不带 spider-host（JRE、unidbg、
+# dex2jar、依赖）。适合只用苹果CMS/网页规则/JSON 接口的用户。
+directories:
+  output: release-lite
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: CrayonShinChan-${version}-${arch}-lite.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 蜡笔小新
+  deleteAppDataOnUninstall: false
+
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

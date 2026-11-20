@@ -33,7 +33,9 @@ const notes = [
   '',
   `- \`CrayonShinChan-${version}-x64.exe\`：NSIS 安装版`,
   `- \`CrayonShinChan-${version}-x64.zip\`：免安装版`,
-  '- 下载后可用 `SHA256SUMS.txt` 核对文件完整性',
+  `- \`CrayonShinChan-${version}-x64-lite.exe\`：精简版（不含 Spider 运行时，体积更小）`,
+  `- \`CrayonShinChan-${version}-x64-lite.zip\`：精简免安装版`,
+  '- 完整版用 `SHA256SUMS.txt`、精简版用 `SHA256SUMS-lite.txt` 核对文件完整性',
   '',
   '程序没有代码签名证书，首次运行可能出现 Windows SmartScreen 提示。'
 ].join('\n')

@@ -101,11 +101,20 @@ jobs:
       - name: Package Windows installer
         run: pnpm build:win
 
+      - name: Package lite installer
+        run: pnpm build:win:lite
+
       - name: Verify release package
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: node scripts/release-check.mjs --version $env:RELEASE_VERSION --write-checksums
+
+      - name: Verify lite release package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/release-check.mjs --version $env:RELEASE_VERSION --lite --write-checksums
 
       - name: Generate release notes
         shell: pwsh
@@ -127,6 +136,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload lite workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CrayonShinChan-lite-${{ steps.version.outputs.version }}
+          path: |
+            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.exe
+            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.exe.blockmap
+            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.zip
+            release-lite/SHA256SUMS-lite.txt
+          if-no-files-found: error
+          retention-days: 14
+
   draft:
     name: Publish draft GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -144,6 +165,11 @@ jobs:
           name: CrayonShinChan-${{ needs.package.outputs.version }}
           path: release-assets
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: CrayonShinChan-lite-${{ needs.package.outputs.version }}
+          path: release-assets
+
       - name: Create or update release draft
         shell: pwsh
         env:
@@ -158,11 +184,15 @@ jobs:
             'release-assets/CrayonShinChan-*-x64.exe.blockmap',
             'release-assets/CrayonShinChan-*-x64.zip',
             'release-assets/latest.yml',
-            'release-assets/SHA256SUMS.txt'
+            'release-assets/SHA256SUMS.txt',
+            'release-assets/CrayonShinChan-*-x64-lite.exe',
+            'release-assets/CrayonShinChan-*-x64-lite.exe.blockmap',
+            'release-assets/CrayonShinChan-*-x64-lite.zip',
+            'release-assets/SHA256SUMS-lite.txt'
           )
           $files = Get-ChildItem -Path $assets -File | Select-Object -ExpandProperty FullName
           if (-not $files) { throw '没有找到可上传的发布资产，拒绝创建空 draft' }
-          if ($files.Count -lt 5) { throw "发布资产不完整（$($files.Count)/5）：$($files -join ', ')" }
+          if ($files.Count -lt 9) { throw "发布资产不完整（$($files.Count)/9）：$($files -join ', ')" }
           $existing = gh release view $env:RELEASE_TAG --json isDraft 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:RELEASE_TAG @files --verify-tag --draft --title "蜡笔小新 $env:RELEASE_TAG" --notes-file $notes

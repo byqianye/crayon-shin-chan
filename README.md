@@ -146,6 +146,7 @@ node node_modules/electron/install.js
 | `pnpm typecheck` | 主进程与渲染进程双工程类型检查 |
 | `pnpm build` | 产出 `out/`（主进程 / preload / 渲染进程） |
 | `pnpm build:win` | electron-builder 打包出 NSIS 安装包与免安装 zip |
+| `pnpm build:win:lite` | 打包 CMS-only 精简版（不含 Spider 运行时）到 `release-lite/` |
 | `pnpm release:check` | 校验 `package.json`、`CHANGELOG.md`、`latest.yml` 与产物版本一致，可生成 `SHA256SUMS.txt` |
 
 打包会先跑 `electron-vite build`，再由 electron-builder 把产物写到 `release/`：NSIS 安装包、免安装 zip、以及 `latest.yml`（增量更新元数据）。国内网络下要给 builder 自己的二进制也指个镜像，否则下载 nsis / 7zip 会卡住：
@@ -153,6 +154,12 @@ node node_modules/electron/install.js
 ```powershell
 $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
 pnpm build:win
+```
+
+不需要 Spider 的用户可以用精简版：它不带 `spider-host`（内置 JRE、unidbg、dex2jar、Android 依赖），只能跑苹果CMS / 网页规则 / JSON 接口。本机 0.1.3 实测安装包从 213MB 降到 120MB，zip 从 262MB 降到 165MB；代价是 Spider 站点会显示运行时不可用，且不会自动下载运行时。
+
+```powershell
+pnpm build:win:lite
 ```
 
 应用图标是**代码生成**的，不依赖任何设计工具：改完配色或造型跑一次就会重新写出 `build/icon.png`（512×512）与多尺寸 `build/icon.ico`（16/24/32/48/64/128/256，直接内嵌 PNG）。electron-builder 会自动认 `build/` 下的这一对文件。

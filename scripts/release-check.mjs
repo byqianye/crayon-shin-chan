@@ -7,8 +7,9 @@ import { promises as fs } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const releaseDir = join(root, 'release')
 const args = process.argv.slice(2)
+const lite = args.includes('--lite')
+const releaseDir = join(root, lite ? 'release-lite' : 'release')
 
 function option(name, fallback = '') {
   const index = args.indexOf(name)
@@ -37,10 +38,11 @@ if (!versionHeading.test(changelog)) {
 }
 
 if (!args.includes('--source-only')) {
+  const suffix = lite ? '-lite' : ''
   const required = [
-    { name: `CrayonShinChan-${requestedVersion}-x64.exe`, minSize: 10 * 1024 * 1024 },
-    { name: `CrayonShinChan-${requestedVersion}-x64.exe.blockmap`, minSize: 1024 },
-    { name: `CrayonShinChan-${requestedVersion}-x64.zip`, minSize: 10 * 1024 * 1024 },
+    { name: `CrayonShinChan-${requestedVersion}-x64${suffix}.exe`, minSize: 10 * 1024 * 1024 },
+    { name: `CrayonShinChan-${requestedVersion}-x64${suffix}.exe.blockmap`, minSize: 1024 },
+    { name: `CrayonShinChan-${requestedVersion}-x64${suffix}.zip`, minSize: 10 * 1024 * 1024 },
     { name: 'latest.yml', minSize: 1 }
   ]
 
@@ -64,9 +66,10 @@ if (!args.includes('--source-only')) {
       const hash = createHash('sha256').update(await fs.readFile(path)).digest('hex')
       lines.push(`${hash}  ${basename(path)}`)
     }
-    await fs.writeFile(join(releaseDir, 'SHA256SUMS.txt'), `${lines.join('\n')}\n`, 'utf8')
-    console.log('[release-check] SHA256SUMS.txt 已生成')
+    const sums = lite ? 'SHA256SUMS-lite.txt' : 'SHA256SUMS.txt'
+    await fs.writeFile(join(releaseDir, sums), `${lines.join('\n')}\n`, 'utf8')
+    console.log(`[release-check] ${sums} 已生成`)
   }
 }
 
-console.log(`[release-check] v${requestedVersion} 版本、产物与元数据一致`)
+console.log(`[release-check] v${requestedVersion}${lite ? ' lite' : ''} 版本、产物与元数据一致`)

@@ -20,6 +20,9 @@
   测试失败按缺类、Android API、native、超时、TLS、空播放字段等分类展示。
 - Spider 运行时加固：首次启用第三方 jar 会确认来源；JVM 过滤敏感环境变量，
   工作目录限制到 `data/spider-work`，连续 3 次调用超时自动杀掉宿主并在下次重启。
+- 安装包瘦身：新增 CMS-only 精简版 `build:win:lite`（不含 Spider 运行时），
+  本机 0.1.3 实测安装包 213MB → 120MB、zip 262MB → 165MB；完整版与精简版
+  会分别生成 `SHA256SUMS.txt` / `SHA256SUMS-lite.txt`。
 
 ## v0.1.2 — Spider 运行时随包发布
 

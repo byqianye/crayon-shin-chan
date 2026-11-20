@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 release/
+release-lite/
 spider-reports/
 *.log
 .DS_Store

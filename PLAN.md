@@ -466,3 +466,14 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
   `ensureReady()` 自动重新拉起；影视源页提供「重新准备运行时」按钮。
 - 实测：Ikanbot 首页 24 条、分类 24 条、缓存 1.30MB/SHA256、清理后 0 文件、
   重启 107ms、缺类分类 `missing_class`；`spider-work` 目录创建成功，177/177 自检通过。
+
+## 20. 安装包瘦身（2026-11-20）
+
+- 新增 `electron-builder.lite.yml` 与 `build:win:lite`：精简版不打包
+  `spider-host`（内置 JRE 44.4MB、unidbg 33.3MB、dex2jar 19.7MB、依赖 13.2MB），
+  只保留 Electron/前端产物，适合 CMS/网页规则/JSON 接口用户。
+- 本机 0.1.3 实测：安装包 213MB → 120,229,061 字节；zip 262MB → 165,127,115 字节。
+  完整版/精简版分别写 `SHA256SUMS.txt` / `SHA256SUMS-lite.txt`。
+- 发布工作流会同时构建两版并上传到同一个 draft Release；精简版明确标注
+  “不含 Spider 运行时”，不承诺自动补装。后续若要“按需下载运行时”，需要
+  再做下载器/校验/权限流程。

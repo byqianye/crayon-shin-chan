@@ -37,6 +37,7 @@ check('自检使用隔离数据目录', /CRAYON_DATA_DIR/.test(selftestRunner) &
 check('发布工作流由 tag 或手动触发', /tags: \['v\*'\]/.test(release) && /workflow_dispatch:/.test(release))
 check('发布工作流生成精简 JRE', /pnpm spider:runtime/.test(release))
 check('发布前运行端到端自检', /node scripts\/ci-selftest\.mjs/.test(release))
+check('发布工作流构建并校验精简包', /pnpm build:win:lite/.test(release) && /--lite/.test(release))
 check('发布工作流校验产物', /node scripts\/release-check\.mjs/.test(release))
 check('发布工作流生成校验清单', /--write-checksums/.test(release))
 check('发布工作流生成发布说明', /node scripts\/release-notes\.mjs/.test(release))
@@ -47,6 +48,8 @@ check('发布资产缺失时报错', /没有找到可上传的发布资产/.test
 check('draft 任务在 gh 前检出仓库', /Publish draft GitHub Release[\s\S]*actions\/checkout@v4/.test(release) && /GH_REPO: \$\{\{ github\.repository \}\}/.test(release))
 check('packageManager 固定 pnpm 版本', packageJson.packageManager === 'pnpm@11.25.0')
 check('打包脚本禁止 electron-builder 隐式发布', /--publish never/.test(packageJson.scripts['build:win']))
+check('提供精简版打包脚本', /electron-builder\.lite\.yml/.test(packageJson.scripts['build:win:lite'] ?? ''))
+check('发布资产完整性包含精简包', /\$files\.Count -lt 9/.test(release) && /lite/.test(release))
 check('真实 Spider 矩阵由定时任务触发', /schedule:/.test(live) && /spider-matrix\.mjs/.test(live))
 check('真实 Spider 矩阵报告作为 artifact 保存', /upload-artifact@v4/.test(live) && /spider-reports\//.test(live))
 
@@ -54,4 +57,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 25 项工作流约束通过')
+console.log('[check-ci] 28 项工作流约束通过')
