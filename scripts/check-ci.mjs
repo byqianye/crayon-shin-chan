@@ -37,6 +37,10 @@ check('自检等待窗口为 120 秒', /READY_TIMEOUT_MS = 120_000/.test(selftes
 check('自检使用隔离数据目录', /CRAYON_DATA_DIR/.test(selftestRunner) && /CRAYON_DISABLE_BUNDLED_SOURCES/.test(selftestRunner))
 check('发布工作流由 tag 或手动触发', /tags: \['v\*'\]/.test(release) && /workflow_dispatch:/.test(release))
 check('发布工作流生成精简 JRE', /pnpm spider:runtime/.test(release))
+check('发布前校验应用图标', /pnpm icon:check/.test(release))
+check('发布前运行离线服务回归', /node scripts\/service-regression\.mjs/.test(release))
+check('发布前运行 Spider 契约', /node scripts\/spider-contract\.mjs/.test(release))
+check('发布前校验锁文件与工作流', /node scripts\/check-lockfile\.mjs/.test(release) && /node scripts\/check-ci\.mjs/.test(release))
 check('发布前运行端到端自检', /node scripts\/ci-selftest\.mjs/.test(release))
 check('发布工作流构建并校验精简包', /pnpm build:win:lite/.test(release) && /--lite/.test(release))
 check('发布工作流校验产物', /node scripts\/release-check\.mjs/.test(release))
@@ -58,4 +62,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 29 项工作流约束通过')
+console.log('[check-ci] 33 项工作流约束通过')

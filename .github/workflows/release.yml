@@ -8,7 +8,7 @@ on:
       version:
         description: Release version without the v prefix
         required: true
-        default: 0.1.3
+        default: 0.1.4
 
 concurrency:
   group: release-${{ github.ref }}
@@ -80,6 +80,21 @@ jobs:
 
       - name: Type check
         run: pnpm typecheck
+
+      - name: Verify application icons
+        run: pnpm icon:check
+
+      - name: Offline service regressions
+        run: node scripts/service-regression.mjs
+
+      - name: Spider contract tests
+        run: node scripts/spider-contract.mjs
+
+      - name: Verify lockfile
+        run: node scripts/check-lockfile.mjs
+
+      - name: Verify workflow constraints
+        run: node scripts/check-ci.mjs
 
       - name: Production build
         run: pnpm build

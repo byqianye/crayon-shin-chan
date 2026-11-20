@@ -60,6 +60,8 @@ if (!args.includes('--source-only')) {
 
   if (args.includes('--write-checksums')) {
     const checksumFiles = required
+      // Release 只附完整版 latest.yml，精简版清单只列实际上传的三个包文件。
+      .filter(({ name }) => !lite || name !== 'latest.yml')
       .map(({ name }) => join(releaseDir, name))
     const lines = []
     for (const path of checksumFiles) {
