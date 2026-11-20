@@ -135,6 +135,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           name: CrayonShinChan-${{ needs.package.outputs.version }}
@@ -144,6 +148,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $notes = Join-Path 'release-assets' 'RELEASE_NOTES.md'
