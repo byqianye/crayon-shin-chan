@@ -16,6 +16,8 @@ permissions:
 env:
   # CI 在境外网络，直接用官方源，避免国内镜像带来的额外跳转
   ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+  # runner 没有 GPU，Electron 缺这组开关会在启动阶段卡住
+  ELECTRON_DISABLE_GPU: '1'
 
 jobs:
   quality:
@@ -133,12 +135,24 @@ jobs:
       - name: 启动开发窗口
         shell: pwsh
         run: |
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'node_modules\electron\dist\electron.exe'
+          if (-not (Test-Path $binary)) { throw "Electron 二进制不存在：$binary" }
           $log = Join-Path $env:RUNNER_TEMP 'dev.log'
           $err = Join-Path $env:RUNNER_TEMP 'dev.err.log'
+          # 不能用 -WindowStyle Hidden：隐藏窗口会让 Electron 起不了 UI 线程，
+          # remote-debugging-port 永远不会监听。runner 是无交互会话，直接前台启动。
           $process = Start-Process -FilePath 'node' `
-            -ArgumentList @('node_modules/electron-vite/bin/electron-vite.js', 'dev', '--', '--remote-debugging-port=9222') `
+            -ArgumentList @(
+              'node_modules/electron-vite/bin/electron-vite.js',
+              'dev',
+              '--',
+              '--remote-debugging-port=9222',
+              '--no-sandbox',
+              '--disable-gpu',
+              '--disable-software-rasterizer',
+              '--disable-dev-shm-usage'
+            ) `
             -WorkingDirectory $env:GITHUB_WORKSPACE `
-            -WindowStyle Hidden `
             -RedirectStandardOutput $log `
             -RedirectStandardError $err `
             -PassThru
