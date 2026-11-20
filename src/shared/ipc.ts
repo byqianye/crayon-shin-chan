@@ -22,6 +22,8 @@ export const IPC = {
   sitesTest: 'sites:test',
   sitesAudit: 'sites:audit',
   sitesIgnore: 'sites:ignore',
+  spiderStatus: 'spider:status',
+  spiderProbe: 'spider:probe',
 
   localSitesList: 'local-sites:list',
   localSitesAdd: 'local-sites:add',

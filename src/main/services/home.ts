@@ -46,7 +46,13 @@ function matchSite(sites: Site[], ref: string): Site | undefined {
 
 /** 只对苹果CMS 类型的站点拉内容：网页规则站的「最近更新」得靠 HTML 规则，暂时不做 */
 function isCms(site: Site): boolean {
-  return (site.type === 3 || site.type === 4) && site.enabled && !site.unsupported && !!site.api
+  return (
+    (site.type === 3 || site.type === 4) &&
+    site.enabled &&
+    !site.unsupported &&
+    !site.spiderClass &&
+    !!site.api
+  )
 }
 
 async function buildPlan(): Promise<{ plans: Plan[]; missing: HomeSection[] }> {

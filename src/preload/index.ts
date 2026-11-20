@@ -30,6 +30,8 @@ import type {
   SearchProgress,
   SearchResponse,
   Site,
+  SpiderProbeResult,
+  SpiderRuntimeStatus,
   TestResult,
   Tombstones,
   VodDetail
@@ -71,6 +73,11 @@ const api = {
     audit: (key: string): Promise<AuditResult> => ipcRenderer.invoke(IPC.sitesAudit, key),
     /** 忽略订阅里的站点：写墓碑，后续同步不再带回来 */
     ignore: (key: string): Promise<void> => ipcRenderer.invoke(IPC.sitesIgnore, key)
+  },
+
+  spider: {
+    status: (): Promise<SpiderRuntimeStatus> => ipcRenderer.invoke(IPC.spiderStatus),
+    probe: (): Promise<SpiderProbeResult> => ipcRenderer.invoke(IPC.spiderProbe)
   },
 
   localSites: {

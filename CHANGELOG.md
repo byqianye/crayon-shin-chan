@@ -1,5 +1,23 @@
 # 更新日志
 
+## v0.1.3 — Android 兼容层补齐
+
+- 补齐 Spider 宿主缺失的 Android API：`SharedPreferences`、`AtomicFile`、
+  `Base64`、`Log`、`ContentResolver` 与 `Build.HARDWARE` 等字段。
+- 修复大量 jar 在 `init` 阶段直接报 `Stub!` / `NoSuchMethodError` 的问题；
+  爱盼/百酷/搬运等使用 `Pan.init` 递归的站点仍会在 Spider 自身逻辑里栈溢出。
+- 连通性测试遇到“首页为空”的 Spider 会再探测一次搜索，避免把只有搜索的站点误判为不可用。
+
+## v0.1.2 — Spider 运行时随包发布
+
+- 修复 0.1.1 安装包漏带 `spider-host` 的问题，打包后 `resources/spider-host`
+  包含内置 JRE、宿主 class、依赖、dex2jar 与 unidbg 桥。
+- `csp_*` 站点不再一律显示「桌面端暂不支持」：有 `spider` 地址的站点标记为
+  Spider，开启后由内置 JVM 搜索、详情与播放；`.py` / `.js` Spider 仍明确标注不支持。
+- 影视源页新增 Spider 运行时状态条与「运行时自检」，并支持批量启用当前筛选的
+  Spider 站点。
+- 安装版实测：肥猫「荐片」首页 7 个分类 / 10 条，搜索「庆余年」5 条、276ms。
+
 ## v0.1.0 — 首个完整版本
 
 从零搭到 M4 收尾。以下按**功能面**归纳，设计取舍与实测数字写在 [`功能框架.txt`](功能框架.txt)，用法写在 [`README.md`](README.md)。

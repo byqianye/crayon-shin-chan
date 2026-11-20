@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AuditResult, Site, SiteType } from '@shared/types'
+import type {
+  AuditResult,
+  Site,
+  SiteType,
+  SpiderProbeResult,
+  SpiderRuntimeStatus
+} from '@shared/types'
 import type { DetectResult } from '@core/source/detect'
 import type { HealthSummary } from '@core/health/score'
 import { SITE_TYPE_LABEL, SITE_TYPE_TAG } from '@shared/siteLabels'
@@ -58,6 +64,8 @@ export function Sites(): JSX.Element {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; text: string }>>({})
   const [healthMap, setHealthMap] = useState<Record<string, HealthSummary>>({})
   const [audits, setAudits] = useState<Record<string, AuditResult | 'running'>>({})
+  const [spiderStatus, setSpiderStatus] = useState<SpiderRuntimeStatus | null>(null)
+  const [spiderProbe, setSpiderProbe] = useState<SpiderProbeResult | 'running' | null>(null)
 
   const [showAdd, setShowAdd] = useState(false)
   const [addMode, setAddMode] = useState<'single' | 'batch'>('single')
@@ -101,6 +109,13 @@ export function Sites(): JSX.Element {
       .then(setHealthMap)
       .catch(() => undefined)
   }, [sites])
+
+  useEffect(() => {
+    void window.api.spider
+      .status()
+      .then(setSpiderStatus)
+      .catch(() => undefined)
+  }, [])
 
   function resetAddForm(): void {
     setName('')
@@ -273,6 +288,41 @@ export function Sites(): JSX.Element {
   }
 
   const enabledKeys = filtered.filter((s) => s.enabled).map((s) => s.key)
+  const spiderSites = sites.filter((s) => Boolean(s.spiderClass))
+  const disabledSpider = filtered.filter(
+    (s) => Boolean(s.spiderClass) && !s.unsupported && !s.enabled
+  )
+
+  async function enableVisibleSpider(): Promise<void> {
+    if (!disabledSpider.length) return
+    if (
+      !window.confirm(
+        `将启用当前列表中的 ${disabledSpider.length} 个 Spider 站点。\n` +
+          '首次搜索会按需启动 JVM 并转换 spider jar，站点越多等待越久；建议先按来源筛选。继续？'
+      )
+    ) {
+      return
+    }
+    await setSitesEnabled(
+      disabledSpider.map((s) => s.key),
+      true
+    )
+    await refreshSites()
+    notify(`已启用 ${disabledSpider.length} 个 Spider 站点`, 'success')
+  }
+
+  async function probeSpiderRuntime(): Promise<void> {
+    setSpiderProbe('running')
+    try {
+      const result = await window.api.spider.probe()
+      setSpiderProbe(result)
+      notify(result.message, result.ok ? 'success' : 'danger')
+    } catch (err) {
+      const result = { ok: false, ms: 0, message: (err as Error).message }
+      setSpiderProbe(result)
+      notify(result.message, 'danger')
+    }
+  }
 
   if (!sites.length) {
     return (
@@ -332,6 +382,9 @@ export function Sites(): JSX.Element {
           <div className="page-sub">
             共 {sites.length} 个站点 · 启用 {sites.filter((s) => s.enabled).length} 个 · 当前列表{' '}
             {filtered.length} 个
+            {spiderSites.length
+              ? ` · Spider ${spiderSites.length} 个（已启用 ${spiderSites.filter((s) => s.enabled).length}）`
+              : ''}
           </div>
         </div>
         <div className="page-actions">
@@ -352,8 +405,43 @@ export function Sites(): JSX.Element {
           >
             全部禁用
           </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => void enableVisibleSpider()}
+            disabled={!disabledSpider.length}
+            title="只启用当前筛选结果中尚未启用的 Spider 站点"
+          >
+            启用可见 Spider
+          </button>
         </div>
       </div>
+
+      {spiderSites.length ? (
+        <div className={`banner ${spiderStatus?.available === false ? 'banner-danger' : 'banner-info'}`}>
+          <span style={{ flex: 1 }}>
+            {spiderStatus?.available === false
+              ? `Spider 运行时不可用：${spiderStatus.reason ?? '缺少组件'}。请重新安装完整版本。`
+              : spiderStatus?.available
+                ? '内置 Spider 运行时可用。Spider 站点开启后即可搜索、详情与播放；首次使用会启动 JVM 并转换 jar，稍等几秒即可。'
+                : '正在检查内置 Spider 运行时…'}
+            {spiderProbe && spiderProbe !== 'running' ? (
+              <span className={spiderProbe.ok ? 'text-3' : ''} style={spiderProbe.ok ? undefined : { color: 'var(--danger)' }}>
+                {' '}
+                自检：{spiderProbe.message}（{spiderProbe.ms}ms）
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={spiderProbe === 'running'}
+            onClick={() => void probeSpiderRuntime()}
+          >
+            {spiderProbe === 'running' ? <span className="spin" /> : null} 运行时自检
+          </button>
+        </div>
+      ) : null}
 
       {showAdd ? (
         <AddPanel
@@ -460,9 +548,12 @@ export function Sites(): JSX.Element {
                 <div className="list-row-main">
                   <div className="list-row-title site-name">
                     <span className="truncate">{site.name}</span>
-                    <span className={`tag ${SITE_TYPE_TAG[site.type]}`}>
-                      {SITE_TYPE_LABEL[site.type]}
+                    <span className={`tag ${site.spiderClass ? 'tag-success' : SITE_TYPE_TAG[site.type]}`}>
+                      {site.spiderClass ? 'Spider' : SITE_TYPE_LABEL[site.type]}
                     </span>
+                    {site.spiderClass && !site.enabled ? (
+                      <span className="tag tag-outline">未启用</span>
+                    ) : null}
                     {site.origin === 'manual' ? <span className="tag tag-accent">手动</span> : null}
                     {site.searchable ? <span className="tag tag-outline">可搜索</span> : null}
                     {!site.searchable && !site.unsupported ? (
@@ -474,6 +565,12 @@ export function Sites(): JSX.Element {
                     <span style={{ margin: '0 8px' }}>·</span>
                     {site.unsupported ? (
                       <span style={{ color: 'var(--warn)' }}>{site.unsupported}</span>
+                    ) : site.spiderClass ? (
+                      <span>
+                        <span className="mono">{site.api}</span>
+                        <span style={{ margin: '0 8px' }}>·</span>
+                        内置 JVM 运行，{site.enabled ? '已启用' : '开启开关后可用'}
+                      </span>
                     ) : (
                       <span className="mono">{site.api || '未配置接口'}</span>
                     )}

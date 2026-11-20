@@ -27,6 +27,8 @@ export interface Site {
   sourceName: string
   /** 本地启用开关（覆盖配置里的默认值） */
   enabled: boolean
+  /** TVBox csp_* 站点对应的 Spider 实现类；有值时走 JVM Spider 宿主 */
+  spiderClass?: string
   /** 最近一次连通性测试延迟(ms)，-1 表示失败，undefined 表示未测 */
   health?: number
   /** 不支持的原因，有值则桌面端会跳过该站点 */
@@ -35,6 +37,25 @@ export interface Site {
   rules?: HtmlRules
   /** 站点来源：订阅配置或手动添加 */
   origin?: 'config' | 'manual'
+}
+
+/** 内置 TVBox Spider 运行时的可用性；渲染进程据此给出明确提示 */
+export interface SpiderRuntimeStatus {
+  available: boolean
+  hostRoot: string
+  javaPath: string
+  javaSource: 'bundled' | 'java_home' | 'system'
+  runtime: boolean
+  hostClasses: boolean
+  libraries: boolean
+  dexTools: boolean
+  reason?: string
+}
+
+export interface SpiderProbeResult {
+  ok: boolean
+  ms: number
+  message: string
 }
 
 /** 手动添加的单个影视源（不依赖订阅配置） */

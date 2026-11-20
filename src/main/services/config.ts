@@ -116,6 +116,8 @@ function normalizeRules(raw: unknown): HtmlRules | undefined {
 export interface SiteNormalizeContext {
   sourceId: string
   sourceName: string
+  /** 配置顶层的 spider 地址；TVBox 的 csp_* 站点共用这一份 jar */
+  spider?: string
   defaults?: { timeout?: number; header?: Record<string, string> }
 }
 
@@ -136,7 +138,7 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
     type,
     api,
     ext: typeof raw.ext === 'string' ? raw.ext : raw.ext ? JSON.stringify(raw.ext) : undefined,
-    jar: typeof raw.jar === 'string' ? raw.jar : undefined,
+    jar: typeof raw.jar === 'string' ? raw.jar : ctx.spider,
     searchable: flag(raw.searchable, true),
     quickSearch: flag(raw.quickSearch, flag(raw.searchable, true)),
     filterable: flag(raw.filterable, type === 3 || type === 4),
@@ -164,19 +166,24 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
     site.searchable = false
     site.quickSearch = false
   } else if (/^csp_/i.test(site.api)) {
-    site.unsupported = '该站点依赖 TVBox Spider（jar），桌面端暂不支持'
-    site.searchable = false
-    site.quickSearch = false
+    // csp_* 是 CatVod/TVBox 的 Spider 类名约定。运行层由 spider-host 提供，
+    // 这里只记录实现类，不再把整站判死。
+    site.spiderClass = `com.github.catvod.spider.${site.api.slice(4)}`
+    if (!site.jar) {
+      site.unsupported = '该站点依赖 Spider，但配置没有提供 spider 文件'
+      site.searchable = false
+      site.quickSearch = false
+    }
   } else if (/\.py(?:\?|$)/i.test(site.api)) {
-    site.unsupported = '该站点依赖 Python Spider（.py），桌面端暂不支持'
+    site.unsupported = '该站点依赖 Python Spider（.py），当前版本未内置 Python 运行时'
     site.searchable = false
     site.quickSearch = false
   } else if (/\.js(?:\?|$)|drpy/i.test(site.api) || /^\.{1,2}\//.test(site.api)) {
-    site.unsupported = '该站点依赖 JS Spider（drpy），桌面端暂不支持'
+    site.unsupported = '该站点依赖 JS Spider（drpy），当前版本未内置 JS 运行时'
     site.searchable = false
     site.quickSearch = false
   } else if (type === 0) {
-    site.unsupported = '需要配套 Spider（jar/dex），桌面端无法运行'
+    site.unsupported = '该站点需要配套 Spider（jar/dex），当前配置未提供可运行文件'
     site.searchable = false
     site.quickSearch = false
   } else if (type === 2) {
@@ -184,6 +191,10 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
     site.searchable = false
     site.quickSearch = false
   }
+  // Spider 站点首次接入时默认关闭：一个配置里可能有几十个 csp_* 站点，
+  // 全量并发会把首次搜索变成几十个 JVM 实例同时初始化。由用户在「影视源」
+  // 页按需打开，既可控也更省内存。
+  if (site.spiderClass && raw.enabled === undefined) site.enabled = false
   return site
 }
 
@@ -244,6 +255,7 @@ export function parseConfig(rawInput: unknown, ctx: SiteNormalizeContext): Parse
   const raw = (rawInput ?? {}) as Record<string, any>
   const ext = (raw.tvboxDesktop ?? {}) as Record<string, any>
   const settings = (raw.settings ?? {}) as Record<string, any>
+  const spider = typeof raw.spider === 'string' && raw.spider.trim() ? raw.spider.trim() : undefined
 
   const defaults = {
     timeout: Number(ext.timeout ?? settings.timeout ?? ctx.defaults?.timeout) || undefined,
@@ -257,7 +269,7 @@ export function parseConfig(rawInput: unknown, ctx: SiteNormalizeContext): Parse
   const seen = new Set<string>()
   const sites: Site[] = []
   for (const item of sitesRaw) {
-    const site = normalizeSite(item, { ...ctx, defaults })
+    const site = normalizeSite(item, { ...ctx, defaults, spider })
     if (!site) continue
     if (seen.has(site.key)) continue
     seen.add(site.key)

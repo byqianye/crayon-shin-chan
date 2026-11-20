@@ -329,7 +329,8 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - `.py`：需要嵌入式 CPython。
 - `.js`（drpy）：需要 drpy Node 运行时。
 
-当前桌面端只支持 CMS 直连与网页规则，所以这些源导入后**点播站点会如实标灰**，直播和解析接口可用。这是当前架构的边界，不是解析失败。
+当时桌面端只支持 CMS 直连与网页规则，所以这些源导入后**点播站点会如实标灰**。
+该限制已在第 13 节的 Spider 宿主 PoC 与第 14 节的 0.1.2 发布中解除（py/js 仍除外）。
 
 ### 下一阶段选项
 
@@ -344,3 +345,60 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - 真实详情：36 集 × 2 条线路；`ffm3u8` 线路直接返回 HTTP 200 的 master playlist；`subyun` 分享页也能解析出 `index.m3u8`。
 - 四个 TVBox 源（肥猫/饭太硬/摸鱼/潇洒）继续作为可选远程预设，仅导入直播/解析接口，点播站点如实标灰。
 - 开发数据目录已清空测试源与测试统计，删除 `bundled-sources` 标志；下次启动会自动安装 `public-cms`，装完即可搜可播。
+
+## 13. Spider 宿主 PoC（2026-11-18 追加）
+
+第 11 节的「关键限制」已被本轮 PoC 部分推翻：`csp_*` 站点现在可以通过
+`spider-host` 在桌面端运行，不再一律标灰。
+
+- 架构：`spider-host` 是一个独立 JVM 进程，Electron 通过 stdin/stdout JSON-RPC
+  调用；所有站点共用一个 JVM，空闲 5 分钟退出。
+- 转换：spider 文件（含 PNG/JPEG 尾部伪装的 zip、`classes.dex`）下载后按 MD5
+  缓存，用 dex2jar 转成 JVM class；第二次直接复用。
+- 实测：荐片 `csp_Jianpian` 搜索 20 条、详情 29 条线路、播放直链 m3u8；
+  金牌 `csp_Jpys` 搜索 4 条、详情/播放均通过；JVM RSS 约 65MB，热态搜索 218–330ms。
+- FishGuard native `ext` 解密已通过一次性 unidbg ARM 桥验证：摸鱼 `FishHxq`
+  的加密 ext 能解成 `http://www.y456y.com/api//2026/fishhxq.php` 并缓存；
+  摸鱼 `FishCloud` 走轻量兼容路径，首页 7 分类 / 251 条、搜索 4 条。
+- 当前未覆盖：FishGuard 的播放级 native 字段/解密尚未全部补齐、依赖 WebView
+  的 spider、Python/JS spider；会明确报错而不是静默跳过。
+
+### 2026-11-18 源站复核
+
+- `https://666.666291.xyz` 页面标题为「再见，我们跑路了」，其
+  `/api.php/provide/vod/` 返回 `closed`；`www.muoua.top` 连接失败。
+- `FishHuban` / `Fishshayang` 的镜像首页可访问，但 `FishCloud.detailContent`
+  仍只返回影片元数据，`vod_play_from` / `vod_play_url` 为空。
+- `FishHxq` 的解密 ext 指向 `www.y456y.com`，接口直接返回 403。
+- 因此当前摸鱼 FishCloud/FishHxq 的播放不是 native 解析缺失，而是源站已关闭、
+  需要账号/签名或没有返回播放字段；需要换存活源后再继续播放链路。
+- 新增入口：`spider-host/build.ps1`、`build-runtime.ps1`、`fetch-deps.ps1`、
+  `fetch-tools.ps1`；`src/main/services/spider.ts`；`scripts/spider-service-smoke.mjs`。
+
+## 14. 0.1.2 发布与 Spider 运行时收口（2026-11-18）
+
+- 修复 0.1.1 安装包未包含 `spider-host` 的发布遗漏：`extraResources` 现在会打进
+  `runtime / out / lib / dex-tools / unidbg-*`；安装包 214MB，解包后
+  `resources/spider-host` 约 110.6MB。
+- `csp_*` 且配置带顶层 `spider` 的站点不再标 `unsupported`；影视源页显示
+  `Spider / 未启用 / 内置 JVM 运行`，默认关闭，可逐条开启或用「启用可见 Spider」
+  批量开启。
+- 新增 `spider:status` / `spider:probe` IPC：影视源页显示运行时状态，并可一键自检
+  JVM 与宿主协议。
+- 安装版 0.1.2 用真实用户数据实测（300 个站点）：识别 289 个 Spider 站点，
+  仅 6 个 py/js 站点明确不支持；运行时自检 161ms 通过；肥猫「荐片」连通性
+  6.2s 通过（7 个分类 / 首页 10 条）；启用后搜索「庆余年」返回 5 条，276ms。
+- 回归：`pnpm typecheck`、`pnpm build`、`pnpm selftest` 177/177 通过。
+
+## 15. 0.1.3 Android 兼容层（2026-11-19）
+
+- 实测 71 个失败 Spider 后定位到宿主 Android API 缺口：`SharedPreferences`、
+  `AtomicFile`、`Base64`、`Log`、`ContentResolver`、`Build.HARDWARE`。
+- 已在 `spider-host/src/main/java/android/` 补齐可运行实现；重新编译宿主。
+- 典型改善：云岫/凝光从 `NoSuchMethodError` 变为可完成搜索调用；独播影视、
+  哔哩合集、哔哩视频、半日99 从失败变为连通；`MTV` 首页返回 128 个分类。
+- 剩余硬边界：`DexNative` 加固类（风云、AI剧、UC、剧迷等）仍报
+  `UnsatisfiedLinkError`；`Pan.init` 自递归站点（爱盼、百酷、搬运）仍栈溢出；
+  其余多为源站超时、TLS 或返回非 JSON。
+- 0.1.3 安装包（214,178,504 字节）已安装；安装版实测云集 4K 首页 114 条、
+  看球 4 个分类、文才 4 个分类、独播影视 81 条、哔哩合集 23 个分类。

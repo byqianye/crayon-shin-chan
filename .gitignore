@@ -11,3 +11,11 @@ data/
 
 # Bit Lantern local data
 .bitlantern/
+
+# Spider 宿主的第三方运行时与构建产物（按 spider-host/*.ps1 重新生成）
+spider-host/lib/
+spider-host/out/
+spider-host/dex-tools/
+spider-host/runtime/
+spider-host/unidbg-libs/
+spider-host/unidbg-out/

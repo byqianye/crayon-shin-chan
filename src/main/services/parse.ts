@@ -1,6 +1,8 @@
 import type { ParseAttempt, ParseInfo, ParseItem, ParseResult, ParseStat, ParseTestResult } from '@shared/types'
 import { decodeResponse, parseLooseJson, request } from './http'
 import { listSources, getParsed } from './sources'
+import { getSite } from './sites'
+import { isSpiderUrl, parseSpiderUrl, spiderPlayerUrl } from './spider'
 import { readStore, writeStore } from './store'
 
 /**
@@ -497,8 +499,22 @@ export async function resolvePlayUrl(
   rawUrl: string,
   options: ResolveOptions = {}
 ): Promise<ParseResult> {
-  const url = (rawUrl ?? '').trim()
+  let url = (rawUrl ?? '').trim()
   if (!url) throw new Error('没有播放地址')
+
+  if (isSpiderUrl(url)) {
+    const parsed = parseSpiderUrl(url)
+    if (!parsed) throw new Error('Spider 播放地址格式不对')
+    const site = await getSite(parsed.siteKey)
+    if (!site) throw new Error('Spider 站点不存在或已被禁用')
+    const spiderResult = await spiderPlayerUrl(site, parsed.flag, parsed.id)
+    if (spiderResult.ok) return spiderResult
+    if (!spiderResult.url) {
+      throw new Error(spiderResult.error || 'Spider 没能换出播放地址')
+    }
+    // Spider 返回的是分享页时，继续走下面的直链探测/解析接口流程。
+    url = spiderResult.url
+  }
 
   if (isDirectMedia(url)) {
     return { ok: true, url, direct: true, ms: 0, attempts: [] }

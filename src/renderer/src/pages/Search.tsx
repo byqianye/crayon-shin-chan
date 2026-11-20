@@ -195,7 +195,7 @@ export function Search(): JSX.Element {
         <EmptyState
           icon={<Icon name="screen-off" size={26} />}
           title="没有可用的影视源"
-          desc="先到「影视源」页启用几个苹果CMS或网页规则类型的站点。需要 Spider 的站点在桌面端无法运行，会自动跳过。"
+          desc="先到「影视源」页启用几个苹果CMS、网页规则或 Spider 类型的站点。Spider 站点首次使用会自动准备运行时。"
           actions={
             <Link className="btn btn-primary" to="/sites">
               前往影视源

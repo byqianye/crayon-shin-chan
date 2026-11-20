@@ -11,6 +11,21 @@ files:
   - out/**/*
   - package.json
 
+# Spider 宿主：JVM、宿主 class、依赖与 dex2jar
+extraResources:
+  - from: spider-host/out
+    to: spider-host/out
+  - from: spider-host/lib
+    to: spider-host/lib
+  - from: spider-host/runtime
+    to: spider-host/runtime
+  - from: spider-host/dex-tools
+    to: spider-host/dex-tools
+  - from: spider-host/unidbg-libs
+    to: spider-host/unidbg-libs
+  - from: spider-host/unidbg-out
+    to: spider-host/unidbg-out
+
 # Windows 目标：NSIS 安装包 + 免安装 zip
 win:
   target:

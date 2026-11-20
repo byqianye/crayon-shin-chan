@@ -374,17 +374,13 @@ export const useApp = create<AppState>((set, get) => ({
       if (updated.error) get().notify(`「${updated.name}」同步失败：${updated.error}`, 'danger')
       else {
         const usable = updated.usableSiteCount
-        const spiderOnly =
-          updated.siteCount > 0 && typeof usable === 'number' && usable === 0
         const suffix =
           typeof usable === 'number' && usable < updated.siteCount
-            ? `（可用 ${usable}）`
+            ? `（可直接运行 ${usable}）`
             : ''
         get().notify(
-          `「${updated.name}」同步完成，${updated.siteCount} 个站点${suffix}${
-            spiderOnly ? '；点播站点依赖 Spider，桌面端暂不可用' : ''
-          }`,
-          spiderOnly ? 'warn' : 'success'
+          `「${updated.name}」同步完成，${updated.siteCount} 个站点${suffix}`,
+          'success'
         )
       }
       await get().refreshSites()

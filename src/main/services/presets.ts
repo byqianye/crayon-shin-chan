@@ -118,8 +118,8 @@ export const SOURCE_PRESETS: SourcePreset[] = [PUBLIC_CMS]
 /**
  * 用户指定的常用 TVBox 配置。它们不是内联 JSON：
  * 配置服务器按 UA 返回不同内容，且包含图片/加密包装，统一在同步时由
- * configPayload.ts 解包。点播站点基本都是 jar/py/js Spider，桌面端只能
- * 导入并标记，直播/解析接口可用。
+ * configPayload.ts 解包。点播站点基本都是 jar/py/js Spider：jar 由内置
+ * JVM 宿主运行（默认关闭、按需启用），py/js 仍会明确标注不支持。
  */
 export interface RemotePreset {
   id: string
@@ -132,25 +132,25 @@ export const REMOTE_PRESETS: RemotePreset[] = [
   {
     id: 'fm-config',
     name: '肥猫接口',
-    desc: '加密 TVBox 配置（自动解密）。点播依赖 jar Spider，当前仅直播/解析可用。',
+    desc: '加密 TVBox 配置（自动解密）。点播依赖 jar Spider，可在「影视源」页启用后运行。',
     url: 'http://肥猫.net'
   },
   {
     id: 'fty-config',
     name: '饭太硬接口',
-    desc: '图片伪装的 TVBox 配置（自动解包）。点播依赖 jar/JS Spider，当前仅直播可用。',
+    desc: '图片伪装的 TVBox 配置（自动解包）。jar Spider 可启用运行，JS Spider 仍不支持。',
     url: 'http://www.饭太硬.net/tv'
   },
   {
     id: 'moyuer-config',
     name: '摸鱼接口',
-    desc: '标准 TVBox 配置。点播依赖 jar Spider，当前不可直接播放。',
+    desc: '标准 TVBox 配置。点播依赖 jar Spider，可在「影视源」页启用后运行。',
     url: 'http://我不是.摸鱼儿.cc/'
   },
   {
     id: 'xiaosa-config',
     name: '潇洒接口',
-    desc: '加密 TVBox 配置（自动解密）。点播依赖 jar/py Spider，当前仅解析接口可用。',
+    desc: '加密 TVBox 配置（自动解密）。jar Spider 可启用运行，py Spider 仍不支持。',
     url: 'https://9877.kstore.space/sun.json'
   }
 ]

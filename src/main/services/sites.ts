@@ -7,6 +7,7 @@ import { listLocalSites, localToSite } from './localSites'
 import { listTombstones } from './tombstones'
 import { getSettings } from './settings'
 import { getParsed, listSources } from './sources'
+import { prewarmSpider, spiderCall, spiderSearch } from './spider'
 import { readStore, writeStore } from './store'
 
 const NAME = 'sites'
@@ -100,6 +101,10 @@ export async function setSiteEnabled(key: string, enabled: boolean): Promise<voi
   const map = await readOverrides()
   map[key] = { ...(map[key] ?? {}), enabled }
   await writeOverrides(map)
+  if (enabled) {
+    const site = (await getSites()).find((item) => item.key === key)
+    if (site?.spiderClass) void prewarmSpider(site).catch(() => undefined)
+  }
 }
 
 export async function setSitesEnabled(keys: string[], enabled: boolean): Promise<void> {
@@ -140,6 +145,41 @@ export async function testSite(key: string): Promise<TestResult> {
   const start = Date.now()
 
   try {
+    if (site.spiderClass) {
+      const data = await spiderCall<{ class?: unknown[]; list?: unknown[] }>(
+        site,
+        'home',
+        { filter: true },
+        60_000
+      )
+      const videos = Array.isArray(data?.list) ? data.list.length : 0
+      const categories = Array.isArray(data?.class) ? data.class.length : 0
+      if (!videos && !categories) {
+        // 不少 Spider 只有搜索、没有首页；首页为空不代表站点不可用。
+        let hits = 0
+        for (const probe of ['电影', '庆余年']) {
+          const list = await spiderSearch(site, probe, 3)
+          hits = list.length
+          if (hits) break
+        }
+        if (!hits) {
+          return { ok: false, ms: Date.now() - start, message: 'Spider 连通，但首页和搜索都没有返回内容' }
+        }
+        await saveHealth(key, Date.now() - start)
+        return {
+          ok: true,
+          ms: Date.now() - start,
+          message: `Spider 正常，首页为空，搜索命中 ${hits} 条`
+        }
+      }
+      await saveHealth(key, Date.now() - start)
+      return {
+        ok: true,
+        ms: Date.now() - start,
+        message: `Spider 正常，${categories} 个分类 / 首页 ${videos} 条`
+      }
+    }
+
     if (site.type === 3 || site.type === 4) {
       const url = buildCmsUrl(site, { ac: 'detail', pg: 1 })
       const header = await resolveHeader(site, url)

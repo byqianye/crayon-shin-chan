@@ -278,7 +278,9 @@ async function loadClasses(site: Site): Promise<SiteClass[]> {
 
 /** 汇总各站点的分类，按「大类 → 子分类」归并后返回目录 */
 export async function listCategories(): Promise<CategoryBucket[]> {
-  const sites = (await getSites()).filter((s) => s.enabled && (s.type === 3 || s.type === 4))
+  const sites = (await getSites()).filter(
+    (s) => s.enabled && (s.type === 3 || s.type === 4) && !s.spiderClass
+  )
   const trees = await Promise.all(
     sites.map(async (site) => ({ site, classes: await loadClasses(site) }))
   )

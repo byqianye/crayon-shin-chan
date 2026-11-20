@@ -6,6 +6,7 @@ import { absolutize, extract } from './htmlRules'
 import { getHealthMap, recordSiteResult } from './health'
 import { getSettings } from './settings'
 import { getSites, resolveHeader } from './sites'
+import { spiderSearch } from './spider'
 import { isCoolingDown } from '@core/health/score'
 
 const DEFAULT_LIMIT = 30
@@ -113,7 +114,9 @@ export async function searchSite(
   try {
     const timeout = site.timeout ?? (await getSettings()).timeout
     let list: Vod[]
-    if (site.type === 3 || site.type === 4) {
+    if (site.spiderClass) {
+      list = await spiderSearch(site, wd, limit)
+    } else if (site.type === 3 || site.type === 4) {
       list = await searchCms(site, wd, limit, timeout)
     } else if (site.type === 1) {
       list = await searchHtml(site, wd, limit, timeout)

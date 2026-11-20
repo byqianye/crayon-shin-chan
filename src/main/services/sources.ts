@@ -27,17 +27,35 @@ export async function hydrate(): Promise<void> {
   if (hydrated) return
   hydrated = true
   const list = await listSources()
+  let changed = false
   for (const source of list) {
     if (!source.enabled || !source.raw) continue
     try {
-      parsedCache.set(
-        source.id,
-        parseConfig(source.raw, { sourceId: source.id, sourceName: source.name })
-      )
+      const parsed = parseConfig(source.raw, {
+        sourceId: source.id,
+        sourceName: source.name
+      })
+      parsedCache.set(source.id, parsed)
+      // 升级后配置的可用性会变化（例如 csp_* 从「不支持」变成 Spider 可运行）。
+      // 这里用本地 raw 回填计数，避免设置页一直显示旧版本留下的「可用 0」。
+      const usable = parsed.sites.filter((s) => !s.unsupported).length
+      if (
+        source.siteCount !== parsed.sites.length ||
+        source.usableSiteCount !== usable ||
+        source.liveCount !== parsed.lives.length ||
+        source.parseCount !== parsed.parses.length
+      ) {
+        source.siteCount = parsed.sites.length
+        source.usableSiteCount = usable
+        source.liveCount = parsed.lives.length
+        source.parseCount = parsed.parses.length
+        changed = true
+      }
     } catch (err) {
       console.warn(`[sources] 回填 ${source.name} 失败`, err)
     }
   }
+  if (changed) await saveSources(list)
 }
 
 export function getParsed(sourceId: string): ParsedConfig | undefined {

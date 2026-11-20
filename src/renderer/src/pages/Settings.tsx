@@ -346,8 +346,9 @@ export function Settings(): JSX.Element {
                 其余字段自动归一化。
               </div>
               <div>
-                · 桌面端无法运行 Java jar / dex 形式的 spider，
-                <span className="mono">type=0</span> 的站点会被标记「需 Spider」并跳过。
+                · 桌面端已内置 Spider 宿主：TVBox 的 <span className="mono">csp_*</span> 站点会自动
+                下载并转换 spider jar（首次约需数秒），之后可直接搜索、详情与播放。
+                只有缺少 spider 文件的 <span className="mono">type=0</span> 站点会被跳过。
               </div>
             </div>
           </div>

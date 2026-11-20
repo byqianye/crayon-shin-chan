@@ -44,6 +44,7 @@ import { cancelSearch, searchAll } from './services/search'
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from './services/settings'
 import { getSites, setSiteEnabled, setSitesEnabled, testSite } from './services/sites'
 import { addSiteTombstone, clearTombstones, listTombstones } from './services/tombstones'
+import { getSpiderRuntimeStatus, probeSpiderHost, stopSpiderHost } from './services/spider'
 import {
   addPreset,
   ensureBundledSources,
@@ -234,6 +235,8 @@ function registerIpc(): void {
     clearCategoryCache()
     clearHomeCache()
   })
+  ipcMain.handle(IPC.spiderStatus, () => getSpiderRuntimeStatus())
+  ipcMain.handle(IPC.spiderProbe, () => probeSpiderHost())
 
   ipcMain.handle(IPC.localSitesList, () => listLocalSites())
   ipcMain.handle(IPC.localSitesAdd, async (_e, input) => {
@@ -376,5 +379,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void stopSpiderHost()
   void flushStore()
 })

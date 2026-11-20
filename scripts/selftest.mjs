@@ -225,7 +225,7 @@ await evalJs('location.reload()')
 await sleep(2500)
 check('影视源页渲染 5 行', (await goto('#/sites')).rows, 5)
 await goto('#/')
-check('首页标题', await evalJs("document.querySelector('h1')?.textContent ?? ''"), 'TVBox Desktop')
+check('首页标题', await evalJs("document.querySelector('h1')?.textContent ?? ''"), '蜡笔小新')
 check(
   '首页统计卡有 6 张',
   await evalJs("document.querySelectorAll('.stat').length"),

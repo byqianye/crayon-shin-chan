@@ -9,6 +9,7 @@ import { extract, selectAll } from './htmlRules'
 import { recordSiteResult } from './health'
 import { getSettings } from './settings'
 import { getSite, resolveHeader } from './sites'
+import { makeSpiderUrl, spiderCall, spiderItemToVod } from './spider'
 
 /**
  * 把苹果CMS 的 vod_play_from / vod_play_url 拆成线路与剧集。
@@ -143,6 +144,36 @@ async function detailHtml(site: Site, vodId: string): Promise<VodDetail> {
   return { ...placeholder, vod_content: content, lines }
 }
 
+async function detailSpider(site: Site, vodId: string): Promise<VodDetail> {
+  const payload = await spiderCall<{ list?: Array<Record<string, unknown>> }>(
+    site,
+    'detail',
+    { ids: [vodId] },
+    60_000
+  )
+  const raw = Array.isArray(payload?.list) ? payload.list[0] : undefined
+  if (!raw) throw new Error('Spider 没有返回该影片的详情')
+
+  const base = spiderItemToVod(raw, site)
+  const content = String(raw.vod_content ?? raw.vod_blurb ?? '')
+    .replace(/<[^>]+>/g, '')
+    .trim()
+  // 播放地址先包成 spider:// 伪链接，等用户点某一集时再调 playerContent，
+  // 避免详情页一次性把几十条线路全部换一遍。
+  const lines = parseLines(
+    String(raw.vod_play_from ?? ''),
+    String(raw.vod_play_url ?? ''),
+    String(raw.vod_play_note ?? '')
+  ).map((line) => ({
+    ...line,
+    episodes: line.episodes.map((episode) => ({
+      ...episode,
+      url: makeSpiderUrl(site.key, line.name, episode.url)
+    }))
+  }))
+  return { ...base, vod_content: content, lines }
+}
+
 export async function getVodDetail(siteKey: string, vodId: string): Promise<VodDetail> {
   const site = await getSite(siteKey)
   if (!site) throw new Error('站点不存在或已被禁用')
@@ -152,7 +183,9 @@ export async function getVodDetail(siteKey: string, vodId: string): Promise<VodD
   const started = Date.now()
   try {
     const detail =
-      site.type === 3 || site.type === 4
+      site.spiderClass
+        ? await detailSpider(site, vodId)
+        : site.type === 3 || site.type === 4
         ? await detailCms(site, vodId)
         : site.type === 1
           ? await detailHtml(site, vodId)

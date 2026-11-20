@@ -163,29 +163,47 @@ export function Player(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode?.url, referer, settings?.accent])
 
+  /** Spider 剧集地址是惰性伪链接，复制/外部播放前先换成真实播放地址 */
+  const resolvePlayableAddress = useCallback(async (): Promise<string | null> => {
+    if (!episode) return null
+    if (!episode.url.startsWith('spider://')) return episode.url
+    try {
+      const result = await window.api.parse.resolve(episode.url)
+      if (result.ok) return result.url
+      notify(result.error ?? 'Spider 播放地址解析失败', 'danger')
+    } catch (err) {
+      notify((err as Error).message, 'danger')
+    }
+    return null
+  }, [episode, notify])
+
   const openExternal = useCallback(async (): Promise<void> => {
     if (!episode) return
     try {
+      const url = await resolvePlayableAddress()
+      if (!url) return
       const result = await window.api.player.open(
-        episode.url,
+        url,
         `${detail?.vod_name ?? ''} ${episode.name}`.trim()
       )
       notify(`已交给外部播放器：${result.player.split(/[\\/]/).pop()}`, 'success')
     } catch (err) {
       notify((err as Error).message, 'danger')
     }
-  }, [episode, detail?.vod_name, notify])
+  }, [episode, detail?.vod_name, notify, resolvePlayableAddress])
 
   /** 把地址丢给系统默认浏览器 / 下载器 */
   const openInBrowser = useCallback(async (): Promise<void> => {
     if (!episode) return
     try {
-      await window.api.openExternal(episode.url)
+      const url = await resolvePlayableAddress()
+      if (!url) return
+      await window.api.openExternal(url)
       notify('已用系统默认浏览器打开这个地址', 'success')
     } catch (err) {
       notify((err as Error).message, 'danger')
     }
-  }, [episode, notify])
+  }, [episode, notify, resolvePlayableAddress])
 
   /**
    * 同一部影片的全部片源，用来在播放页直接换源。
@@ -354,10 +372,13 @@ export function Player(): JSX.Element {
               type="button"
               className="btn btn-sm"
               onClick={() => {
-                void navigator.clipboard.writeText(episode.url).then(
-                  () => setHint('地址已复制到剪贴板'),
-                  () => setHint('复制失败，可以手动选中下面的地址')
-                )
+                void resolvePlayableAddress().then((url) => {
+                  if (!url) return
+                  return navigator.clipboard.writeText(url).then(
+                    () => setHint('地址已复制到剪贴板'),
+                    () => setHint('复制失败，可以手动选中下面的地址')
+                  )
+                })
               }}
             >
               <Icon name="link" size={13} /> 复制地址
