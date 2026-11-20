@@ -1,21 +1,25 @@
 import * as cheerio from 'cheerio'
 import type { SearchOptions, SearchResponse, Site, SiteSearchResult, Vod } from '@shared/types'
-import { asArray, buildCmsUrl, isCmsOk } from './cms'
-import { fetchText, parseLooseJson } from './http'
+import { asArray, isCmsOk } from './cms'
+import { requestCms } from './cmsApi'
+import { fetchText } from './http'
 import { absolutize, extract } from './htmlRules'
 import { getHealthMap, recordSiteResult } from './health'
 import { getSettings } from './settings'
 import { getSites, resolveHeader } from './sites'
 import { spiderSearch } from './spider'
-import { isCoolingDown } from '@core/health/score'
+import { isCoolingDown, scoreHealth } from '@core/health/score'
 
 const DEFAULT_LIMIT = 30
 
 /** 搜索请求的取消令牌：发起新搜索时旧的那一批会自行停下 */
 let currentToken = 0
+let currentController: AbortController | null = null
 
 export function cancelSearch(): void {
   currentToken++
+  currentController?.abort()
+  currentController = null
 }
 
 function fail(site: Site, message: string, ms = 0): SiteSearchResult {
@@ -42,15 +46,12 @@ export function cmsItemToVod(raw: Record<string, unknown>, site: Site): Vod {
   }
 }
 
-async function searchCms(site: Site, wd: string, limit: number, timeout: number): Promise<Vod[]> {
+async function searchCms(site: Site, wd: string, limit: number, signal?: AbortSignal): Promise<Vod[]> {
   // 搜索用 ac=detail：MacCMS V10 的 detail 同时支持 wd 关键词，且一次就带回
   // vod_play_url，省掉一次详情请求。只有配置作者在模板里写了 {ac} 时，才按
   // TVBox 惯例填 videolist（部分老版本 CMS 只认这个写法）。
   const ac = /\{ac\}/i.test(site.api) ? 'videolist' : 'detail'
-  const url = buildCmsUrl(site, { ac, wd, pg: 1 })
-  const header = await resolveHeader(site, url)
-  const text = await fetchText(url, { header, timeout })
-  const payload = parseLooseJson<Record<string, unknown>>(text)
+  const payload = await requestCms(site, { ac, wd, pg: 1 }, signal)
   if (!isCmsOk(payload)) {
     throw new Error(`接口返回异常：${String(payload?.msg ?? 'code 非成功')}`)
   }
@@ -60,14 +61,14 @@ async function searchCms(site: Site, wd: string, limit: number, timeout: number)
     .filter((v) => v.vod_name && v.vod_id)
 }
 
-async function searchHtml(site: Site, wd: string, limit: number, timeout: number): Promise<Vod[]> {
+async function searchHtml(site: Site, wd: string, limit: number, timeout: number, signal?: AbortSignal): Promise<Vod[]> {
   const template = (site.rules?.search || site.api).trim()
   const target = template.replace(/\{(wd|kw|key|keyword)\}/gi, encodeURIComponent(wd))
   if (!/^https?:\/\//i.test(target)) {
     throw new Error('网页规则站缺少可请求的搜索地址')
   }
   const header = await resolveHeader(site, target)
-  const text = await fetchText(target, { header, timeout })
+  const text = await fetchText(target, { header, timeout, signal })
   const $ = cheerio.load(text)
   const rules = site.rules ?? {}
   const nodes = $((rules.list || '').trim())
@@ -104,7 +105,8 @@ async function searchHtml(site: Site, wd: string, limit: number, timeout: number
 export async function searchSite(
   site: Site,
   wd: string,
-  limit = DEFAULT_LIMIT
+  limit = DEFAULT_LIMIT,
+  signal?: AbortSignal
 ): Promise<SiteSearchResult> {
   const start = Date.now()
   if (site.unsupported) return fail(site, site.unsupported)
@@ -115,14 +117,15 @@ export async function searchSite(
     const timeout = site.timeout ?? (await getSettings()).timeout
     let list: Vod[]
     if (site.spiderClass) {
-      list = await spiderSearch(site, wd, limit)
+      list = await spiderSearch(site, wd, limit, signal)
     } else if (site.type === 3 || site.type === 4) {
-      list = await searchCms(site, wd, limit, timeout)
+      list = await searchCms(site, wd, limit, signal)
     } else if (site.type === 1) {
-      list = await searchHtml(site, wd, limit, timeout)
+      list = await searchHtml(site, wd, limit, timeout, signal)
     } else {
       return fail(site, site.unsupported ?? '该类型暂不支持搜索')
     }
+    signal?.throwIfAborted()
     const ms = Date.now() - start
     await recordSiteResult(site.key, true, ms)
     return {
@@ -135,6 +138,7 @@ export async function searchSite(
     }
   } catch (err) {
     const ms = Date.now() - start
+    if (signal?.aborted) return fail(site, '搜索已取消', ms)
     await recordSiteResult(site.key, false, ms)
     return fail(site, (err as Error).message, ms)
   }
@@ -160,7 +164,10 @@ export async function searchAll(
   const started = Date.now()
   if (!keyword) return { wd: keyword, ms: 0, total: 0, results: [] }
 
-  const token = ++currentToken
+  cancelSearch()
+  const token = currentToken
+  const controller = new AbortController()
+  currentController = controller
   const all = await searchableSites()
   const targets = options.sites?.length
     ? all.filter((s) => options.sites?.includes(s.key))
@@ -190,7 +197,7 @@ export async function searchAll(
       // 等冷却结束（10 分钟）后自动恢复。
       const result = isCoolingDown(healthMap[site.key])
         ? fail(site, '该站点连续失败，冷却中')
-        : await searchSite(site, keyword, limit)
+        : await searchSite(site, keyword, limit, controller.signal)
       if (token !== currentToken) return
       results.push(result)
       done++
@@ -198,15 +205,21 @@ export async function searchAll(
     }
   }
 
-  // 冷却中的站点排到最后，其他站点保持用户在「影视源」里设定的顺序
-  targets.sort(
-    (a, b) =>
-      Number(isCoolingDown(healthMap[a.key])) - Number(isCoolingDown(healthMap[b.key]))
-  )
+  // 先让 HTTP 源出结果，避免数百个冷 Spider 把首屏排在 JVM 初始化后面。
+  const priority = new Map(targets.map((site) => [site.key, {
+    cooling: Number(isCoolingDown(healthMap[site.key])),
+    spider: Number(Boolean(site.spiderClass)),
+    health: scoreHealth(healthMap[site.key])
+  }]))
+  targets.sort((a, b) => {
+    const left = priority.get(a.key)!, right = priority.get(b.key)!
+    return left.cooling - right.cooling || left.spider - right.spider || right.health - left.health
+  })
 
   await Promise.all(
     Array.from({ length: Math.min(concurrency, targets.length) }, () => worker())
   )
+  if (currentController === controller) currentController = null
 
   return { wd: keyword, ms: Date.now() - started, total: targets.length, results }
 }

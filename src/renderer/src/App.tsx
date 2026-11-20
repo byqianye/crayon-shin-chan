@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
@@ -8,12 +8,14 @@ import { useApp } from '@/store/useApp'
 import { Home } from '@/pages/Home'
 import { Search } from '@/pages/Search'
 import { Detail } from '@/pages/Detail'
-import { Player } from '@/pages/Player'
-import { Live } from '@/pages/Live'
 import { Library } from '@/pages/Library'
 import { Sites } from '@/pages/Sites'
 import { Settings } from '@/pages/Settings'
 import '@/styles/pages.css'
+
+// 播放器和 HLS 库较大，首页与搜索无需提前解析它们。
+const Player = lazy(() => import('@/pages/Player').then((module) => ({ default: module.Player })))
+const Live = lazy(() => import('@/pages/Live').then((module) => ({ default: module.Live })))
 
 export default function App(): JSX.Element {
   const ready = useApp((s) => s.ready)
@@ -41,17 +43,19 @@ export default function App(): JSX.Element {
       <div className="app-main">
         <TopBar />
         <main className="app-content">
-          <Routes>
-            <Route path="/" element={noSources ? <FirstRun /> : <Home />} />
-            <Route path="/search" element={<Search />} />
-            <Route path="/detail/:siteKey/:vodId" element={<Detail />} />
-            <Route path="/play/:siteKey/:vodId/:lineIndex/:epIndex" element={<Player />} />
-            <Route path="/live" element={<Live />} />
-            <Route path="/library" element={<Library />} />
-            <Route path="/sites" element={<Sites />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={noSources ? <FirstRun /> : <Home />} />
-          </Routes>
+          <Suspense fallback={<div className="page" role="status">正在加载页面…</div>}>
+            <Routes>
+              <Route path="/" element={noSources ? <FirstRun /> : <Home />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/detail/:siteKey/:vodId" element={<Detail />} />
+              <Route path="/play/:siteKey/:vodId/:lineIndex/:epIndex" element={<Player />} />
+              <Route path="/live" element={<Live />} />
+              <Route path="/library" element={<Library />} />
+              <Route path="/sites" element={<Sites />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={noSources ? <FirstRun /> : <Home />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
       <Toasts />

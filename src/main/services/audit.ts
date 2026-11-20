@@ -1,16 +1,18 @@
 import type { AuditResult, Site, Vod } from '@shared/types'
-import { buildCmsUrl, isCmsOk, asArray } from './cms'
-import { fetchText, parseLooseJson } from './http'
+import { isCmsOk, asArray } from './cms'
+import { requestCms } from './cmsApi'
 import { getVodDetail } from './detail'
 import { searchSite } from './search'
-import { getSite, resolveHeader } from './sites'
+import { getSite } from './sites'
+import { spiderCall } from './spider'
 
 async function countCategories(site: Site): Promise<number> {
+  if (site.spiderClass) {
+    const payload = await spiderCall<{ class?: unknown }>(site, 'home', { filter: true })
+    return asArray(payload?.class).length
+  }
   if (site.type !== 3 && site.type !== 4) return 0
-  const url = buildCmsUrl(site, { ac: 'list' })
-  const header = await resolveHeader(site, url)
-  const text = await fetchText(url, { header, timeout: site.timeout })
-  const payload = parseLooseJson<Record<string, unknown>>(text)
+  const payload = await requestCms(site, { ac: 'list' })
   if (!isCmsOk(payload)) throw new Error('分类接口返回异常')
   const classes = asArray<unknown>(payload.class)
   return classes.length

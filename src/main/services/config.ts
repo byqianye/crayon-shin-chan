@@ -10,6 +10,7 @@ import type {
   SiteType
 } from '@shared/types'
 import { loadConfigPayload } from './configPayload'
+import { resolveSourceAddress } from '@shared/url'
 
 /**
  * 配置解析层：同时吃 TVBox 兼容方言与本项目简洁方言。
@@ -19,6 +20,7 @@ import { loadConfigPayload } from './configPayload'
 const STRING_TYPE_MAP: Record<string, SiteType> = {
   cms: 3,
   maccms: 3,
+  xml: 3,
   apple: 3,
   apples: 3,
   '苹果cms': 3,
@@ -45,13 +47,16 @@ function shortHash(input: string): string {
   return (h >>> 0).toString(36)
 }
 
-function normalizeApi(raw: string): string {
+function normalizeApi(raw: string, baseUrl?: string): string {
   const api = (raw ?? '').trim()
   if (!api) return ''
   if (/^https?:\/\//i.test(api)) return api
   if (/^(proxy|file|assets|clan|to)`?:\/\//i.test(api)) return api
   // 形如 cms1.example.com/api.php/provide/vod/ 的裸域名
-  if (/^[\w.-]+\.[a-z]{2,}/i.test(api)) return `https://${api}`
+  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)/i.test(api) && !/^[^/]+\.(php|json|js|py)(?:[/?#]|$)/i.test(api)) return 'https://' + api
+  if (!/^[a-z][\w+.-]*:/i.test(api) && (/^\.{0,2}\//.test(api) || /\.(php|json|js|py)(?:[/?]|$)/i.test(api))) {
+    return resolveSourceAddress(api, baseUrl)
+  }
   return api
 }
 
@@ -116,6 +121,7 @@ function normalizeRules(raw: unknown): HtmlRules | undefined {
 export interface SiteNormalizeContext {
   sourceId: string
   sourceName: string
+  baseUrl?: string
   /** 配置顶层的 spider 地址；TVBox 的 csp_* 站点共用这一份 jar */
   spider?: string
   defaults?: { timeout?: number; header?: Record<string, string> }
@@ -125,11 +131,14 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
   if (!input || typeof input !== 'object') return null
   const raw = input as Record<string, any>
   const name = String(raw.name ?? raw.title ?? '').trim()
-  const api = normalizeApi(String(raw.api ?? raw.url ?? raw.ext?.api ?? ''))
+  const api = normalizeApi(String(raw.api ?? raw.url ?? raw.ext?.api ?? ''), ctx.baseUrl)
   if (!name && !api) return null
 
   const rules = normalizeRules(raw.rules ?? raw.ext?.rules)
-  const type = normalizeType(raw.type, api, rules)
+  let type = normalizeType(raw.type, api, rules)
+  // TVBox 的 HTTP 0/1 分别是 XML/JSON 采集；本项目的 type=1 另用于带规则的网页站。
+  const numericType = typeof raw.type === 'number' || (typeof raw.type === 'string' && /^[01]$/.test(raw.type.trim()))
+  if (numericType && /^https?:\/\//i.test(api) && (type === 0 || (type === 1 && !rules))) type = 3
   const key = String(raw.key ?? raw.id ?? `csp_${shortHash(`${name}|${api}`)}`).trim()
 
   const site: Site = {
@@ -137,8 +146,10 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
     name: name || key,
     type,
     api,
-    ext: typeof raw.ext === 'string' ? raw.ext : raw.ext ? JSON.stringify(raw.ext) : undefined,
-    jar: typeof raw.jar === 'string' ? raw.jar : ctx.spider,
+    ext: typeof raw.ext === 'string'
+      ? (/^\.{0,2}\//.test(raw.ext) ? resolveSourceAddress(raw.ext, ctx.baseUrl) : raw.ext)
+      : raw.ext ? JSON.stringify(raw.ext) : undefined,
+    jar: typeof raw.jar === 'string' ? resolveSourceAddress(raw.jar, ctx.baseUrl) : ctx.spider,
     searchable: flag(raw.searchable, true),
     quickSearch: flag(raw.quickSearch, flag(raw.searchable, true)),
     filterable: flag(raw.filterable, type === 3 || type === 4),
@@ -255,7 +266,8 @@ export function parseConfig(rawInput: unknown, ctx: SiteNormalizeContext): Parse
   const raw = (rawInput ?? {}) as Record<string, any>
   const ext = (raw.tvboxDesktop ?? {}) as Record<string, any>
   const settings = (raw.settings ?? {}) as Record<string, any>
-  const spider = typeof raw.spider === 'string' && raw.spider.trim() ? raw.spider.trim() : undefined
+  const spider = typeof raw.spider === 'string' && raw.spider.trim()
+    ? resolveSourceAddress(raw.spider.trim(), ctx.baseUrl) : ctx.spider
 
   const defaults = {
     timeout: Number(ext.timeout ?? settings.timeout ?? ctx.defaults?.timeout) || undefined,
@@ -280,8 +292,8 @@ export function parseConfig(rawInput: unknown, ctx: SiteNormalizeContext): Parse
     name: String(raw.name ?? ext.name ?? ctx.sourceName ?? '未命名配置'),
     notice: raw.notice ? String(raw.notice) : undefined,
     sites,
-    parses: normalizeParses(raw.parses),
-    lives: normalizeLives(raw.lives),
+    parses: normalizeParses(raw.parses).map((item) => ({ ...item, url: resolveSourceAddress(item.url, ctx.baseUrl) })),
+    lives: normalizeLives(raw.lives).map((item) => ({ ...item, url: resolveSourceAddress(item.url, ctx.baseUrl) })),
     flags: Array.isArray(raw.flags) ? raw.flags.map(String) : [],
     headers: normalizeHeaderRules(raw.headers ?? settings.headers),
     theme: (raw.theme ?? ext.theme) as ParsedConfig['theme'],
@@ -303,5 +315,5 @@ export async function loadConfigSource(
   } else {
     json = (await loadConfigPayload(source.url, timeout)).raw
   }
-  return parseConfig(json, { sourceId: source.id, sourceName: source.name, defaults: { timeout } })
+  return parseConfig(json, { sourceId: source.id, sourceName: source.name, baseUrl: source.url, defaults: { timeout } })
 }

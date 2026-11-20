@@ -18,6 +18,7 @@ export interface RequestOptions {
   encoding?: string
   /** 允许非 2xx 也当成功（部分站点返回 500 但带数据） */
   allowHttpError?: boolean
+  signal?: AbortSignal
 }
 
 export interface RawResponse {
@@ -43,6 +44,7 @@ function detectEncoding(buffer: Buffer, contentType: string, forced?: string): s
 export async function request(url: string, options: RequestOptions = {}): Promise<RawResponse> {
   const timeoutMs = (options.timeout ?? 20) * 1000
   const controller = new AbortController()
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const headers: Record<string, string> = {
@@ -55,7 +57,7 @@ export async function request(url: string, options: RequestOptions = {}): Promis
       headers,
       body: options.body,
       redirect: 'follow',
-      signal: controller.signal
+      signal
     })
     const buffer = Buffer.from(await res.arrayBuffer())
     const flatHeaders: Record<string, string> = {}
@@ -68,6 +70,7 @@ export async function request(url: string, options: RequestOptions = {}): Promis
     return { ok: res.ok, status: res.status, finalUrl: res.url || url, headers: flatHeaders, buffer }
   } catch (err) {
     const e = err as Error
+    if (options.signal?.aborted) throw new DOMException('请求已取消', 'AbortError')
     if (e.name === 'AbortError') throw new Error(`请求超时（${timeoutMs / 1000}s）`)
     throw new Error(e.message || '网络请求失败')
   } finally {

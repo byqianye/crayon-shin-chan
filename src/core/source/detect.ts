@@ -35,6 +35,7 @@ export function detectSourceContent(text: string): DetectResult {
   const body = (text ?? '').replace(/^\uFEFF/, '').trim()
   if (!body) return { kind: 'unknown' }
   if (body.startsWith('#EXTM3U')) return { kind: 'm3u' }
+  if (/<rss\b/i.test(body) && /<(list|class)\b/i.test(body)) return { kind: 'cms' }
   // 肥猫 / 潇洒这类 hex-tag-aes 加密配置
   if (/^2423[0-9a-f]{16,}/i.test(body)) return { kind: 'encrypted' }
 

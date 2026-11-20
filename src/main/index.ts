@@ -14,6 +14,7 @@ import { getHealthSummary, clearHealth as clearSiteHealth } from './services/hea
 import { clearLiveCache, loadLive } from './services/live'
 import { clearHealth, getHealth, probeLines } from './services/liveHealth'
 import { headersFor, resolveRoomUrl } from './services/streamResolve'
+import { mediaHeadersFor, registerMediaHeaders } from './services/mediaHeaders'
 import {
   clearFavorites,
   clearHistory,
@@ -42,7 +43,8 @@ import {
 import type { ResolveOptions } from './services/parse'
 import { cancelSearch, searchAll } from './services/search'
 import { DEFAULT_SETTINGS, getSettings, saveSettings } from './services/settings'
-import { getSites, setSiteEnabled, setSitesEnabled, testSite } from './services/sites'
+import { getSite, getSites, setSiteEnabled, setSitesEnabled, testSite } from './services/sites'
+import { resolveHeader } from './services/headers'
 import { addSiteTombstone, clearTombstones, listTombstones } from './services/tombstones'
 import {
   clearSpiderCache,
@@ -177,7 +179,14 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.settingsGet, () => getSettings())
-  ipcMain.handle(IPC.settingsSet, (_e, patch) => saveSettings(patch))
+  ipcMain.handle(IPC.settingsSet, async (_e, patch) => {
+    const settings = await saveSettings(patch)
+    if (patch.userAgent !== undefined || patch.timeout !== undefined) {
+      clearCategoryCache()
+      clearHomeCache()
+    }
+    return settings
+  })
 
   // 配置源一变，直播频道缓存和分类树缓存就作废：否则换完订阅再进「电视直播」
   // 或「分类浏览」还会看到上一个源的分组 / 分类。
@@ -230,12 +239,16 @@ function registerIpc(): void {
   ipcMain.handle(IPC.sourcesAddPreset, (_e, id: string) => addPreset(id))
 
   ipcMain.handle(IPC.sitesList, () => getSites())
-  ipcMain.handle(IPC.sitesSetEnabled, (_e, key: string, enabled: boolean) =>
-    setSiteEnabled(key, enabled)
-  )
-  ipcMain.handle(IPC.sitesSetAllEnabled, (_e, keys: string[], enabled: boolean) =>
-    setSitesEnabled(keys, enabled)
-  )
+  ipcMain.handle(IPC.sitesSetEnabled, async (_e, key: string, enabled: boolean) => {
+    await setSiteEnabled(key, enabled)
+    clearCategoryCache()
+    clearHomeCache()
+  })
+  ipcMain.handle(IPC.sitesSetAllEnabled, async (_e, keys: string[], enabled: boolean) => {
+    await setSitesEnabled(keys, enabled)
+    clearCategoryCache()
+    clearHomeCache()
+  })
   ipcMain.handle(IPC.sitesTest, (_e, key: string) => testSite(key))
   ipcMain.handle(IPC.sitesAudit, (_e, key: string) => auditSite(key))
   ipcMain.handle(IPC.sitesIgnore, async (_e, key: string) => {
@@ -341,7 +354,15 @@ function registerIpc(): void {
   ipcMain.handle(IPC.parseList, () => listParses())
   ipcMain.handle(
     IPC.parseResolve,
-    (_e, url: string, options: ResolveOptions) => resolvePlayUrl(url, options)
+    async (_e, url: string, options: ResolveOptions) => {
+      const result = await resolvePlayUrl(url, options)
+      if (result.ok) {
+        const site = options?.siteKey ? await getSite(options.siteKey) : undefined
+        const header = site ? { ...await resolveHeader(site, result.url), ...result.header } : result.header
+        registerMediaHeaders(result.url, header)
+      }
+      return result
+    }
   )
   ipcMain.handle(IPC.parseTest, (_e, url: string, target?: string) => testParse(url, target))
   ipcMain.handle(
@@ -372,8 +393,13 @@ void app.whenReady().then(async () => {
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['*://*/*'] },
     (details, callback) => {
-      const extra = headersFor(details.url)
-      if (extra) Object.assign(details.requestHeaders, extra)
+      const extra = { ...headersFor(details.url), ...mediaHeadersFor(details.url) }
+      for (const [key, value] of Object.entries(extra)) {
+        for (const existing of Object.keys(details.requestHeaders)) {
+          if (existing.toLowerCase() === key.toLowerCase()) delete details.requestHeaders[existing]
+        }
+        details.requestHeaders[key] = value
+      }
       callback({ requestHeaders: details.requestHeaders })
     }
   )
@@ -385,7 +411,7 @@ void app.whenReady().then(async () => {
   // 用户打开就能搜、能看直播，不必先自己去找订阅地址。
   if (withBundledSources) {
     await ensureBundledSources()
-    // 四个 TVBox 源先登记、不拉网络；窗口起来后再后台同步，避免首启被长超时拖住。
+    // 内置 TVBox 源先登记、不拉网络；窗口起来后再后台同步，避免首启被长超时拖住。
     await ensureRemotePresetRecords()
   }
   await createWindow()

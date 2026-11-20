@@ -10,7 +10,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { projectRoot } from './lib/spider-bundle.mjs'
+import { createRequire } from 'node:module'
+import { bundleSpiderService, projectRoot } from './lib/spider-bundle.mjs'
 
 const root = projectRoot()
 const javaHome = process.env.JAVA_HOME || ''
@@ -31,6 +32,23 @@ try {
   await mkdir(classesDir, { recursive: true })
 
   const files = {
+    'ConcurrentSpider.java': `package testcase;
+import com.github.catvod.crawler.Spider;
+public class ConcurrentSpider extends Spider {
+  private static int opens = 0;
+  private String ext;
+  public void init(android.content.Context context, String value) {
+    ext = value; opens++;
+    try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+  }
+  public String action(String name) {
+    return "{\\"opens\\":" + opens + ",\\"ext\\":\\"" + ext + "\\"}";
+  }
+  public String searchContent(String key, boolean quick) {
+    try { Thread.sleep(60000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    return "{\\"list\\":[]}";
+  }
+}`,
     'NormalSpider.java': `package testcase;
 import com.github.catvod.crawler.Spider;
 import java.util.List;
@@ -128,6 +146,38 @@ public class MissingMethodsSpider extends Spider {
     stdio: 'inherit'
   })
   if (pack.status !== 0) throw new Error(`jar 打包失败（${pack.status}）`)
+
+  process.env.SPIDER_PROJECT_ROOT = root
+  process.env.SPIDER_USERDATA = join(temp, 'data')
+  process.env.SPIDER_JAVA = join(javaHome, 'bin', 'java.exe')
+  const service = createRequire(import.meta.url)(await bundleSpiderService(temp))
+  const site = { key: 'concurrent', sourceId: 'contract', jar: testJar,
+    spiderClass: 'testcase.ConcurrentSpider', ext: 'v1' }
+  try {
+    const opened = await Promise.all(Array.from({ length: 12 }, () => service.spiderCall(site, 'action', { action: 'state' })))
+    if (!opened.every((result) => result.opens === 1 && result.ext === 'v1')) throw new Error('同站并发初始化没有合并')
+    console.log('[PASS] 12 concurrent calls initialize one Spider')
+    const updated = await service.spiderCall({ ...site, ext: 'v2' }, 'action', { action: 'state' })
+    if (updated.ext !== 'v2') throw new Error('修改 ext 后仍复用旧 Spider')
+    console.log('[PASS] Changed ext opens a fresh Spider')
+    const busySites = Array.from({ length: 4 }, (_, i) => ({ ...site, key: 'busy-' + i }))
+    await Promise.all(busySites.map((item) => service.spiderCall(item, 'action', { action: 'state' })))
+    const controller = new AbortController()
+    const work = Promise.allSettled(busySites.map((item) => service.spiderSearch(item, 'slow', 1, controller.signal)))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const started = performance.now()
+    controller.abort()
+    const cancelled = await work
+    if (!cancelled.every((item) => item.status === 'rejected' && item.reason.name === 'AbortError')) throw new Error('取消未传播到 Spider 调用')
+    await service.spiderCall(site, 'action', { action: 'state' }, 1500)
+    if (performance.now() - started > 1500) throw new Error('取消后工作线程未及时释放')
+    console.log('[PASS] Cancelling four busy Spider calls releases workers')
+    await service.stopSpiderHost()
+    await service.spiderCall(site, 'action', { action: 'state' })
+    console.log('[PASS] Spider restarts after shutdown')
+  } finally {
+    await service.stopSpiderHost()
+  }
 
   const cases = {
     keyword: '契约测试',

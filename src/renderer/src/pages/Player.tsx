@@ -126,18 +126,14 @@ export function Player(): JSX.Element {
     }
 
     const boot = async (): Promise<void> => {
-      if (isDirectMedia(raw)) {
-        mount(raw)
-        return
-      }
-      setResolving(true)
+      setResolving(!isDirectMedia(raw))
       try {
-        const r = await window.api.parse.resolve(raw)
+        const r = await window.api.parse.resolve(raw, { siteKey, flag: line?.name })
         if (!alive) return
         if (r.ok) {
           setResolveNote(
             r.direct
-              ? '这个地址本来就是直链'
+              ? ''
               : `「${r.parseName ?? '解析接口'}」换出了播放地址 · ${r.ms}ms`
           )
           mount(r.url)
@@ -158,24 +154,23 @@ export function Player(): JSX.Element {
       artRef.current = null
       art?.destroy(false)
     }
-    // 依赖只留 url / referer / accent：把 detail 的字段放进依赖会让详情加载完成后
-    // 重建播放器实例，正在播的流会被打断。
+    // 不依赖整个 detail 对象，缓存更新时仍应保留正在播放的实例。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [episode?.url, referer, settings?.accent])
+  }, [episode?.url, referer, settings?.accent, siteKey, line?.name])
 
   /** Spider 剧集地址是惰性伪链接，复制/外部播放前先换成真实播放地址 */
   const resolvePlayableAddress = useCallback(async (): Promise<string | null> => {
     if (!episode) return null
     if (!episode.url.startsWith('spider://')) return episode.url
     try {
-      const result = await window.api.parse.resolve(episode.url)
+      const result = await window.api.parse.resolve(episode.url, { siteKey, flag: line?.name })
       if (result.ok) return result.url
       notify(result.error ?? 'Spider 播放地址解析失败', 'danger')
     } catch (err) {
       notify((err as Error).message, 'danger')
     }
     return null
-  }, [episode, notify])
+  }, [episode, notify, siteKey, line?.name])
 
   const openExternal = useCallback(async (): Promise<void> => {
     if (!episode) return

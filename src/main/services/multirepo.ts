@@ -1,13 +1,13 @@
 import type {
   ConfigSource,
+  HeaderRule,
   LiveSource,
   MultiRepoEntry,
   ParsedConfig,
   ParseItem,
   Site
 } from '@shared/types'
-import { fetchJson } from './http'
-import { parseConfig } from './config'
+import { loadConfigSource } from './config'
 
 export interface MultiRepoRef {
   name: string
@@ -52,19 +52,20 @@ export async function loadMultiRepo(
   const sites: Site[] = []
   const parses: ParseItem[] = []
   const lives: LiveSource[] = []
+  const headers: HeaderRule[] = []
+  const flags = new Set<string>()
+  const sections: NonNullable<ParsedConfig['home']>['sections'] = []
   const repos: MultiRepoEntry[] = []
 
   for (const ref of refs) {
     try {
-      const raw = await fetchJson(ref.url, { timeout })
-      const parsed = parseConfig(raw, {
-        sourceId: source.id,
-        sourceName: ref.name,
-        defaults: { timeout }
-      })
+      const parsed = await loadConfigSource({ id: source.id, name: ref.name, url: ref.url, kind: 'url' }, timeout)
       sites.push(...parsed.sites)
       parses.push(...parsed.parses)
       lives.push(...parsed.lives)
+      headers.push(...parsed.headers)
+      for (const flag of parsed.flags) flags.add(flag)
+      sections.push(...(parsed.home?.sections ?? []))
       repos.push({ name: ref.name, url: ref.url, ok: true, siteCount: parsed.sites.length })
     } catch (err) {
       repos.push({
@@ -82,8 +83,9 @@ export async function loadMultiRepo(
       sites,
       parses,
       lives,
-      flags: [],
-      headers: [],
+      flags: [...flags],
+      headers,
+      home: sections.length ? { sections } : undefined,
       raw: { multiRepo: refs.map((ref) => ref.url) }
     },
     repos

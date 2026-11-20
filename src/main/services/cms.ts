@@ -1,4 +1,6 @@
 import type { Site } from '@shared/types'
+import * as cheerio from 'cheerio'
+import { parseLooseJson } from './http'
 
 /**
  * 苹果CMS(MacCMS V10) 接口地址构造。
@@ -14,51 +16,23 @@ export interface CmsQuery {
   h?: string
 }
 
-const PLACEHOLDERS: Array<[keyof CmsQuery, RegExp]> = [
-  ['ac', /\{ac\}/g],
-  ['wd', /\{(wd|kw|key|keyword)\}/g],
-  ['pg', /\{(pg|page)\}/g],
-  ['t', /\{(t|type|typeid|class)\}/g],
-  ['ids', /\{(ids|id)\}/g]
-]
+const SLOT_KEYS: Record<string, keyof CmsQuery> = {
+  ac: 'ac', wd: 'wd', kw: 'wd', key: 'wd', keyword: 'wd', pg: 'pg', page: 'pg',
+  t: 't', type: 't', typeid: 't', class: 't', ids: 'ids', id: 'ids', h: 'h'
+}
 
 export function buildCmsUrl(site: Site, query: CmsQuery): string {
-  const api = site.api ?? ''
-  let templated = false
-  let url = api
-
-  for (const [key, re] of PLACEHOLDERS) {
-    if (re.test(url)) {
-      templated = true
-      const value = query[key]
-      url = url.replace(re, value === undefined ? '' : encodeURIComponent(String(value)))
-    }
+  const slots = new Set<keyof CmsQuery>()
+  const expanded = site.api.replace(/\{(ac|wd|kw|key|keyword|pg|page|t|type|typeid|class|ids|id|h)\}/gi, (_slot, name: string) => {
+    const key = SLOT_KEYS[name.toLowerCase()]
+    slots.add(key)
+    return encodeURIComponent(String(query[key] ?? ''))
+  })
+  const url = new URL(expanded)
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && !slots.has(key as keyof CmsQuery)) url.searchParams.set(key, String(value))
   }
-
-  if (templated) {
-    let out = url.replace(/\{h\}/g, String(query.h ?? ''))
-    // 模板里没有 {ids} 槽位时，详情请求还是要能带上 ids：
-    // 只替换不追加的话，`?ac={ac}&t={t}&pg={pg}&wd={wd}` 这种模板
-    // 永远取不到详情页（实测桩上就是这个现象——点进去一直解析不出剧集）。
-    if (query.ids !== undefined && !/[?&]ids=/.test(out)) {
-      const sep = out.includes('?') ? (out.endsWith('?') || out.endsWith('&') ? '' : '&') : '?'
-      out = `${out}${sep}ids=${encodeURIComponent(String(query.ids))}`
-    }
-    return out
-  }
-
-  // 基地址模式：安全拼接查询串
-  const params = new URLSearchParams()
-  if (query.ac) params.set('ac', query.ac)
-  if (query.wd !== undefined) params.set('wd', query.wd)
-  if (query.pg !== undefined) params.set('pg', String(query.pg))
-  if (query.t !== undefined && query.t !== '') params.set('t', String(query.t))
-  if (query.ids !== undefined) params.set('ids', String(query.ids))
-
-  const qs = params.toString()
-  if (!qs) return url
-  const sep = url.includes('?') ? (url.endsWith('?') || url.endsWith('&') ? '' : '&') : '?'
-  return `${url}${sep}${qs}`
+  return url.toString()
 }
 
 /**
@@ -92,7 +66,8 @@ export function buildCmsBrowseUrl(site: Site, ac: string, types: string[], pg: n
 }
 
 /** 归一化苹果CMS 返回，容忍 code 为 1 / "1" / "ok" 等写法 */
-export function isCmsOk(payload: unknown): boolean {  if (!payload || typeof payload !== 'object') return false
+export function isCmsOk(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false
   const code = (payload as Record<string, unknown>).code
   if (code === undefined || code === null || code === '') return true
   const s = String(code).toLowerCase()
@@ -103,4 +78,38 @@ export function asArray<T = unknown>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[]
   if (value && typeof value === 'object') return [value as T]
   return []
+}
+
+/** XML 采集接口与 JSON 接口统一为同一种响应，避免各链路支持范围不同。 */
+export function parseCmsPayload(text: string): Record<string, unknown> {
+  if (!/^\s*\uFEFF?\s*</.test(text)) {
+    const payload = parseLooseJson<Record<string, unknown>>(text)
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+      !['list', 'class', 'code'].some((key) => key in payload)) throw new Error('接口未返回 CMS 数据')
+    return payload
+  }
+  const $ = cheerio.load(text, { xml: true })
+  if (!$('rss').length || (!$('rss > list').length && !$('rss > class').length)) {
+    throw new Error('接口未返回 CMS XML 数据')
+  }
+  const list = $('rss > list')
+  const fields: Record<string, string> = { id: 'vod_id', name: 'vod_name', pic: 'vod_pic',
+    note: 'vod_remarks', year: 'vod_year', area: 'vod_area', actor: 'vod_actor',
+    director: 'vod_director', type: 'type_name', score: 'vod_score', des: 'vod_content' }
+  return {
+    code: 1,
+    page: list.attr('page'), pagecount: list.attr('pagecount'), total: list.attr('recordcount'),
+    class: $('rss > class > ty').toArray().map((el) => ({
+      type_id: $(el).attr('id'), type_name: $(el).text().trim(), type_pid: $(el).attr('pid') ?? '0'
+    })),
+    list: list.children('video').toArray().map((el) => {
+      const node = $(el)
+      const item: Record<string, unknown> = {}
+      for (const [tag, key] of Object.entries(fields)) item[key] = node.children(tag).text().trim()
+      const lines = node.find('dl > dd').toArray()
+      item.vod_play_from = lines.map((line) => $(line).attr('flag') ?? '').join('$$$')
+      item.vod_play_url = lines.map((line) => $(line).text().trim()).join('$$$')
+      return item
+    })
+  }
 }

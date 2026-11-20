@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { ConfigSource, ParsedConfig } from '@shared/types'
-import { normalizeSourceUrl } from '@shared/url'
+import { normalizeSourceUrl, resolveSourceAddress } from '@shared/url'
 import { parseConfig, loadConfigSource } from './config'
 import { extractMultiRepo, loadMultiRepo } from './multirepo'
 import { getSettings } from './settings'
@@ -33,7 +33,8 @@ export async function hydrate(): Promise<void> {
     try {
       const parsed = parseConfig(source.raw, {
         sourceId: source.id,
-        sourceName: source.name
+        sourceName: source.name,
+        baseUrl: source.url
       })
       parsedCache.set(source.id, parsed)
       // 升级后配置的可用性会变化（例如 csp_* 从「不支持」变成 Spider 可运行）。
@@ -140,7 +141,7 @@ export async function syncSource(id: string): Promise<ConfigSource> {
   const next: ConfigSource = { ...source }
   try {
     const parsed = await loadConfigSource(source, settings.timeout)
-    const refs = extractMultiRepo(parsed.raw)
+    const refs = extractMultiRepo(parsed.raw).map((ref) => ({ ...ref, url: resolveSourceAddress(ref.url, source.url) }))
     if (refs.length && !parsed.sites.length) {
       // 多仓清单：逐个拉取子仓库，合并成一份可直接 hydrate 的配置
       const multi = await loadMultiRepo(source, refs, settings.timeout)
@@ -151,7 +152,10 @@ export async function syncSource(id: string): Promise<ConfigSource> {
         name: multi.parsed.name,
         sites: multi.parsed.sites,
         parses: multi.parsed.parses,
-        lives: multi.parsed.lives
+        lives: multi.parsed.lives,
+        headers: multi.parsed.headers,
+        flags: multi.parsed.flags,
+        home: multi.parsed.home
       }
       next.siteCount = multi.parsed.sites.length
       next.usableSiteCount = multi.parsed.sites.filter((s) => !s.unsupported).length

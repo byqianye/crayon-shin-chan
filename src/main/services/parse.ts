@@ -482,6 +482,8 @@ async function recordStat(url: string, attempt: ParseAttempt): Promise<void> {
 /* ---------- 对外入口 ---------- */
 
 export interface ResolveOptions {
+  /** 所选站点，用于给最终媒体请求应用该站点的请求头。 */
+  siteKey?: string
   /** 线路名（详情里的 line.name），用来挑专门解析这条线路的接口 */
   flag?: string
   /** 用户在界面上手动指定的一条解析（按名字或地址） */

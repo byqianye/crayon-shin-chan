@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,6 +43,7 @@ public final class SpiderHost {
     private final Map<String, Spider> spiders = new ConcurrentHashMap<>();
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
     private final ExecutorService workers = Executors.newFixedThreadPool(4);
+    private final Map<Long, FutureTask<Void>> calls = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         String jar = null;
@@ -93,7 +95,32 @@ public final class SpiderHost {
             line = line.trim();
             if (line.isEmpty()) continue;
             String request = line;
-            workers.submit(() -> handle(request));
+            JsonObject message;
+            try {
+                message = JsonParser.parseString(request).getAsJsonObject();
+            } catch (RuntimeException invalid) {
+                workers.submit(() -> handle(request));
+                continue;
+            }
+            String method = stringParam(message, "method", "");
+            // 控制消息不能排在已阻塞的四个工作线程后面。
+            if ("cancel".equals(method)) {
+                long id = message.getAsJsonObject("params").get("id").getAsLong();
+                FutureTask<Void> task = calls.remove(id);
+                if (task != null) task.cancel(true);
+                continue;
+            }
+            if ("shutdown".equals(method)) {
+                workers.shutdownNow();
+                System.exit(0);
+                return;
+            }
+            final long id = message.has("id") ? message.get("id").getAsLong() : -1;
+            FutureTask<Void> task = new FutureTask<Void>(() -> { handle(request); return null; }) {
+                @Override protected void done() { calls.remove(id, this); }
+            };
+            calls.put(id, task);
+            workers.execute(task);
         }
         workers.shutdown();
         workers.awaitTermination(10, TimeUnit.SECONDS);
@@ -148,6 +175,7 @@ public final class SpiderHost {
         }
         Object lock = locks.computeIfAbsent(site, key -> new Object());
         synchronized (lock) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException("request cancelled");
             switch (method) {
                 case "home":
                     return parse(spider.homeContent(boolParam(params, "filter", true)));

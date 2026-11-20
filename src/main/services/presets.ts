@@ -8,7 +8,7 @@ import { readStore, writeStore } from './store'
 
 /** 记住「内置订阅已经送过了」，避免用户删光后重启又冒出来 */
 const BUNDLED_FLAG = 'bundled-sources'
-/** 用户指定的四个 TVBox 源只预置一次；用户删掉后不复活 */
+/** 内置 TVBox 源只预置一次；用户删掉后不复活 */
 const REMOTE_BUNDLED_FLAG = 'bundled-remote-sources'
 
 /**
@@ -41,13 +41,13 @@ export interface SourcePreset {
 const PUBLIC_CMS: SourcePreset = {
   id: 'public-cms',
   name: '公开可用源（苹果CMS 采集站）',
-  desc: '实测存活的 5 个公开采集接口 + 2 个公开直播源。这类源随时可能失效，失效后在「影视源」「电视直播」页一看便知。',
+  desc: '5 个公开采集接口 + 1 个公开直播源。这类源随时可能失效，失效后在「影视源」「电视直播」页一看便知。',
   siteCount: 5,
-  liveCount: 2,
+  liveCount: 1,
   config: {
     format: 'tvbox-desktop/1',
     name: '公开可用源（苹果CMS 采集站）',
-    note: '实测存活的公开采集接口，全部是标准苹果CMS v10 的 /api.php/provide/vod。判断标准有三条：列表接口有数据、带 wd 的搜索有结果、详情能解析出剧集地址。直播源一 txt 一 m3u，用来覆盖两种解析格式。',
+    note: '公开采集接口采用标准苹果CMS v10 的 /api.php/provide/vod。可用性应分别检查列表、关键词搜索、详情与播放地址；直播订阅为 IPv4 txt，接口和频道均可能随上游变化。',
     sites: [
       {
         key: 'ffzy',
@@ -116,7 +116,7 @@ const PUBLIC_CMS: SourcePreset = {
 export const SOURCE_PRESETS: SourcePreset[] = [PUBLIC_CMS]
 
 /**
- * 用户指定的常用 TVBox 配置。它们不是内联 JSON：
+ * 内置的常用 TVBox 配置。它不是内联 JSON：
  * 配置服务器按 UA 返回不同内容，且包含图片/加密包装，统一在同步时由
  * configPayload.ts 解包。点播站点基本都是 jar/py/js Spider：jar 由内置
  * JVM 宿主运行（默认关闭、按需启用），py/js 仍会明确标注不支持。
@@ -134,24 +134,6 @@ export const REMOTE_PRESETS: RemotePreset[] = [
     name: '肥猫接口',
     desc: '加密 TVBox 配置（自动解密）。点播依赖 jar Spider，可在「影视源」页启用后运行。',
     url: 'http://肥猫.net'
-  },
-  {
-    id: 'fty-config',
-    name: '饭太硬接口',
-    desc: '图片伪装的 TVBox 配置（自动解包）。jar Spider 可启用运行，JS Spider 仍不支持。',
-    url: 'http://www.饭太硬.net/tv'
-  },
-  {
-    id: 'moyuer-config',
-    name: '摸鱼接口',
-    desc: '标准 TVBox 配置。点播依赖 jar Spider，可在「影视源」页启用后运行。',
-    url: 'http://我不是.摸鱼儿.cc/'
-  },
-  {
-    id: 'xiaosa-config',
-    name: '潇洒接口',
-    desc: '加密 TVBox 配置（自动解密）。jar Spider 可启用运行，py Spider 仍不支持。',
-    url: 'https://9877.kstore.space/sun.json'
   }
 ]
 
@@ -201,8 +183,8 @@ export async function addPreset(id: string): Promise<ConfigSource> {
 }
 
 /**
- * 首启登记四个 TVBox 配置源。只写源记录，不拉网络：
- * 这样窗口能立刻显示它们，不会被这几个源的长超时拖住启动。
+ * 首启登记内置 TVBox 配置源。只写源记录，不拉网络：
+ * 这样窗口能立刻显示该源，不会被它的长超时拖住启动。
  */
 export async function ensureRemotePresetRecords(): Promise<void> {
   if (await readStore<boolean>(REMOTE_BUNDLED_FLAG, false)) return
@@ -219,7 +201,7 @@ export async function ensureRemotePresetRecords(): Promise<void> {
   await writeStore(REMOTE_BUNDLED_FLAG, true)
 }
 
-/** 窗口起来后后台同步四个 TVBox 源；失败只记日志，不影响启动 */
+/** 窗口起来后后台同步内置 TVBox 源；失败只记日志，不影响启动 */
 export async function syncRemotePresets(): Promise<void> {
   const sources = await listSources()
   for (const preset of REMOTE_PRESETS) {

@@ -171,7 +171,7 @@ const api = {
   parse: {
     list: (): Promise<ParseInfo[]> => ipcRenderer.invoke(IPC.parseList),
     /** 网页型地址走解析换直链；直链会原样返回（direct=true） */
-    resolve: (url: string, options?: { flag?: string; prefer?: string }): Promise<ParseResult> =>
+    resolve: (url: string, options?: { flag?: string; prefer?: string; siteKey?: string }): Promise<ParseResult> =>
       ipcRenderer.invoke(IPC.parseResolve, url, options ?? {}),
     test: (url: string, target?: string): Promise<ParseTestResult> =>
       ipcRenderer.invoke(IPC.parseTest, url, target),

@@ -1,9 +1,9 @@
 import type { HomeSection, Site } from '@shared/types'
-import { asArray, buildCmsBrowseUrl, buildCmsUrl, isCmsOk } from './cms'
-import { fetchText, parseLooseJson } from './http'
+import { asArray, isCmsOk } from './cms'
+import { requestCms } from './cmsApi'
 import { cmsItemToVod } from './search'
 import { getSettings } from './settings'
-import { getSites, resolveHeader } from './sites'
+import { getSites } from './sites'
 import { getParsed, listSources } from './sources'
 import { spiderCall, spiderItemToVod } from './spider'
 
@@ -168,11 +168,7 @@ async function loadSection(plan: Plan): Promise<HomeSection> {
       return { ...base, items }
     }
     // ac=detail 会连 vod_play_url 一起带回来，点进详情就不用再请求一次
-    const url = plan.typeId
-      ? buildCmsBrowseUrl(plan.site, 'detail', [plan.typeId], 1)
-      : buildCmsUrl(plan.site, { ac: 'detail', pg: 1 })
-    const text = await fetchText(url, { header: await resolveHeader(plan.site, url) })
-    const payload = parseLooseJson(text)
+    const payload = await requestCms(plan.site, { ac: 'detail', t: plan.typeId, pg: 1 })
     if (!isCmsOk(payload)) {
       const msg = String((payload as Record<string, unknown>)?.msg ?? '') || 'code 非成功'
       return { ...base, items: [], error: `接口返回异常：${msg}` }
@@ -188,6 +184,8 @@ async function loadSection(plan: Plan): Promise<HomeSection> {
 }
 
 let cache: { sig: string; at: number; sections: HomeSection[] } | null = null
+let homeGeneration = 0
+let loading: { sig: string; gen: number; task: Promise<HomeSection[]> } | null = null
 
 /**
  * 首页内容位。配置里有 `home.sections` 就按配置来，没有就每个可用源给一条「最近更新」。
@@ -196,8 +194,10 @@ let cache: { sig: string; at: number; sections: HomeSection[] } | null = null
  * 不能让整个首页白屏。
  */
 export async function listHomeSections(force = false): Promise<HomeSection[]> {
+  const gen = homeGeneration
   const { plans, missing } = await buildPlan()
-  const sig = plans.map((p) => p.key).join('|')
+  if (gen !== homeGeneration) return listHomeSections(force)
+  const sig = JSON.stringify(plans)
 
   if (!force && cache && cache.sig === sig) {
     const age = Date.now() - cache.at
@@ -206,6 +206,14 @@ export async function listHomeSections(force = false): Promise<HomeSection[]> {
     if (age < limit) return [...cache.sections, ...missing]
   }
 
+  if (loading?.sig === sig && loading.gen === gen) return [...await loading.task, ...missing]
+  const task = loadPlans(plans, sig, gen)
+  loading = { sig, gen, task }
+  try { return [...await task, ...missing] }
+  finally { if (loading?.task === task) loading = null }
+}
+
+async function loadPlans(plans: Plan[], sig: string, gen: number): Promise<HomeSection[]> {
   const settings = await getSettings()
   const concurrency = Math.max(1, Math.min(32, settings.concurrency ?? 8))
   const sections: HomeSection[] = new Array(plans.length)
@@ -220,11 +228,13 @@ export async function listHomeSections(force = false): Promise<HomeSection[]> {
   await Promise.all(Array.from({ length: Math.min(concurrency, plans.length) }, () => worker()))
 
   const filled = sections.filter(Boolean)
-  cache = { sig, at: Date.now(), sections: filled }
-  return [...filled, ...missing]
+  if (gen === homeGeneration) cache = { sig, at: Date.now(), sections: filled }
+  return filled
 }
 
 /** 站点列表变了（换源、启用开关）就得让缓存失效 */
 export function clearHomeCache(): void {
+  homeGeneration++
+  loading = null
   cache = null
 }

@@ -1,9 +1,9 @@
 import type { CategoryBucket, CategoryPage, CategorySiteIds, CategorySub, Site, SiteClass, SiteSearchResult, Vod } from '@shared/types'
-import { buildCmsBrowseUrl, buildCmsUrl, asArray, isCmsOk } from './cms'
-import { fetchText, parseLooseJson } from './http'
+import { asArray, isCmsOk } from './cms'
+import { clearCmsCache, requestCms } from './cmsApi'
 import { cmsItemToVod } from './search'
 import { getSettings } from './settings'
-import { getSites, resolveHeader } from './sites'
+import { getSites } from './sites'
 import { spiderCall, spiderItemToVod } from './spider'
 
 /**
@@ -19,8 +19,8 @@ import { spiderCall, spiderItemToVod } from './spider'
  *
  * 三个实测结论决定了查询方式：
  *   1. 父分类 id 查不出东西（`t=1` 返回 0 条），必须展开到叶子分类；
- *   2. 重复的 t 参数是按 OR 处理的（`t=6&t=7` 的 total 等于两者各自之和），
- *      所以一次请求就能覆盖一个站点在某个分类下的全部叶子；
+ *   2. 重复的 t 参数通常只认最后一项，多个叶子要分开请求再合并，
+ *      不能把一个子分类的结果当作整个大类；
  *   3. **归并必须按叶子分类名来判**，不能只看顶层分类：天堂／量子的「记录片」
  *      挂在「电影片」下面，非凡／天堂的「短剧」挂在「连续剧」下面，量子／天堂的
  *      「动画片」也挂在「电影片」下面——只看顶层就会把这些全算进电影或电视剧。
@@ -35,7 +35,7 @@ const SKIP = /(解说|演员|明星|资讯|新闻|预告|花絮|伦理|福利|�
  * 「电影」里也不能写 `片$`：那会把「综艺片」「动漫片」「纪录片」全吃成电影。
  */
 const BUCKETS: Array<{ name: string; re: RegExp }> = [
-  { name: '电影', re: /电影|影院/ },
+  { name: '电影', re: /电影|影院|^(动作|喜剧|爱情|科幻|恐怖|惊悚|剧情|战争|犯罪|悬疑|冒险|灾难)片?$/ },
   { name: '短剧', re: /短剧|微剧|竖屏/ },
   { name: '纪录片', re: /纪录|记录|纪实/ },
   { name: '动漫', re: /动漫|动画|番剧|漫画|漫剧/ },
@@ -146,6 +146,7 @@ let categoryGeneration = 0
  * 所以由 index.ts 在增删改/同步配置源时主动作废。
  */
 export function clearCategoryCache(): void {
+  clearCmsCache()
   classCache.clear()
   inflight.clear()
   // inflight.clear() 只是让后来者重新发请求，**已经在飞的那次**跑完照样会
@@ -267,9 +268,7 @@ async function loadClasses(site: Site): Promise<SiteClass[]> {
         )
         classes = normalizeClasses(payload?.class)
       } else {
-        const url = buildCmsUrl(site, { ac: 'list' })
-        const text = await fetchText(url, { header: await resolveHeader(site, url) })
-        const payload = parseLooseJson(text)
+        const payload = await requestCms(site, { ac: 'list' })
         if (!isCmsOk(payload)) return []
         classes = normalizeClasses((payload as Record<string, unknown>).class)
       }
@@ -280,7 +279,7 @@ async function loadClasses(site: Site): Promise<SiteClass[]> {
       // 分类拉不到不该让整个目录页崩掉，当作这个站点没有目录
       return []
     } finally {
-      inflight.delete(site.key)
+      if (gen === categoryGeneration) inflight.delete(site.key)
     }
   })()
 
@@ -293,9 +292,16 @@ export async function listCategories(): Promise<CategoryBucket[]> {
   const sites = (await getSites()).filter(
     (s) => s.enabled && !s.unsupported && (s.spiderClass || s.type === 3 || s.type === 4)
   )
-  const trees = await Promise.all(
-    sites.map(async (site) => ({ site, classes: await loadClasses(site) }))
-  )
+  const trees: Array<{ site: Site; classes: SiteClass[] }> = new Array(sites.length)
+  const settings = await getSettings()
+  let cursor = 0
+  await Promise.all(Array.from({ length: Math.min(sites.length, Math.max(1, Math.min(32, settings.concurrency))) }, async () => {
+    for (;;) {
+      const index = cursor++
+      if (index >= sites.length) return
+      trees[index] = { site: sites[index], classes: await loadClasses(sites[index]) }
+    }
+  }))
 
   // 大类 → 子分类 → 站点 → 叶子 id
   const grouped = new Map<string, Map<string, Map<string, { name: string; ids: Set<string>; order: number }>>>()
@@ -399,10 +405,8 @@ async function browseSite(
     }
 
     // ac=detail 会把 vod_play_url 一起带回来，详情页就不用再请求一次
-    const url = buildCmsBrowseUrl(site, 'detail', typeIds, page)
-    const text = await fetchText(url, { header: await resolveHeader(site, url) })
+    const payload = await requestCms(site, { ac: 'detail', t: typeIds[0], pg: page })
     const ms = Date.now() - started
-    const payload = parseLooseJson(text)
     if (!isCmsOk(payload)) {
       const msg = str((payload as Record<string, unknown>)?.msg) || '接口返回异常'
       return { result: fail(site, `接口返回异常：${msg}`, ms), pageCount: 0 }
@@ -477,10 +481,17 @@ export async function browseCategory(bucket: string, sub = '', page = 1): Promis
     ids: string[]
   }
   const jobs: Job[] = []
+  const seen = new Set<string>()
   for (const s of picked) {
     for (const entry of s.sites) {
       const site = byKey.get(entry.siteKey)
-      if (site) jobs.push({ siteKey: entry.siteKey, siteName: entry.siteName, site, ids: entry.typeIds })
+      if (!site) continue
+      for (const id of entry.typeIds) {
+        const key = JSON.stringify([entry.siteKey, id])
+        if (seen.has(key)) continue
+        seen.add(key)
+        jobs.push({ siteKey: entry.siteKey, siteName: entry.siteName, site, ids: [id] })
+      }
     }
   }
 
@@ -507,8 +518,7 @@ export async function browseCategory(bucket: string, sub = '', page = 1): Promis
   }
 
   const results: SiteSearchResult[] = []
-  // 一个站点能翻多深，取决于它**最浅**的那个子分类——只有每个子分类都还有第 N 页，
-  // 合并出来的第 N 页才是完整的
+  // 较浅的子分类翻完后，较深的仍要继续提供下一页。
   const siteDepth: number[] = []
   for (const [siteKey, slot] of perSite) {
     const ok = slot.results.filter((r) => r.ok)
@@ -529,7 +539,7 @@ export async function browseCategory(bucket: string, sub = '', page = 1): Promis
     const depths = jobs
       .map((job, i) => (job.siteKey === siteKey ? pages[i].pageCount : 0))
       .filter((n) => n > 0)
-    if (depths.length) siteDepth.push(Math.min(...depths))
+    if (depths.length) siteDepth.push(Math.max(...depths))
     results.push({
       siteKey,
       siteName: slot.siteName,

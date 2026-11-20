@@ -10,6 +10,7 @@ import type {
   HistoryItem,
   HomeSection,
   LiveResult,
+  SearchProgress,
   Site,
   SiteSearchResult,
   SourcePresetInfo,
@@ -110,14 +111,23 @@ const emptyBrowse = (): BrowseSession => ({
  * `if (categories.length || categoriesLoading) return` 那道守卫
  * 会让目录一直停在上一套分类上 —— 表现就是「子分类只剩几个」。
  */
-const staleCatalog = () => ({
-  categories: [],
-  categoriesLoading: false,
-  browse: emptyBrowse(),
-  /** 换了配置源 / 改了启用开关，首页内容位也得重拉（主进程那边缓存也清了） */
-  home: [] as HomeSection[],
-  homeLoaded: false
-})
+let catalogGeneration = 0
+const detailRequests = new Map<string, Promise<VodDetail>>()
+const detailTimes = new Map<string, number>()
+const staleCatalog = () => {
+  catalogGeneration++
+  detailRequests.clear()
+  detailTimes.clear()
+  return {
+    details: {} as Record<string, VodDetail>,
+    categories: [],
+    categoriesLoading: false,
+    browse: emptyBrowse(),
+    /** 换了配置源 / 改了启用开关，首页内容位也得重拉（主进程那边缓存也清了） */
+    home: [] as HomeSection[],
+    homeLoaded: false
+  }
+}
 
 /** 同 searchRunId：连点两个分类时，先发起的那一批要闭嘴 */
 let browseRunId = 0
@@ -453,14 +463,26 @@ export const useApp = create<AppState>((set, get) => ({
       search: { wd: keyword, running: true, total: 0, done: 0, results: [], scope: sites ?? [] }
     })
 
-    const off = window.api.search.onProgress((p) => {
-      if (runId !== searchRunId) return
+    let queued: SearchProgress[] = []
+    let progressTimer: ReturnType<typeof setTimeout> | undefined
+    const flushProgress = (): void => {
+      progressTimer = undefined
+      const batch = queued
+      queued = []
+      if (runId !== searchRunId || !batch.length) return
       set((s) => {
-        if (s.search.wd !== p.wd) return {}
-        const results = s.search.results.filter((r) => r.siteKey !== p.result.siteKey)
-        results.push(p.result)
-        return { search: { ...s.search, done: p.done, total: p.total, results } }
+        if (s.search.wd !== keyword) return {}
+        const results = new Map(s.search.results.map((result) => [result.siteKey, result]))
+        for (const p of batch) if (p.wd === keyword) results.set(p.result.siteKey, p.result)
+        const last = batch[batch.length - 1]
+        return { search: { ...s.search, done: last.done, total: last.total, results: [...results.values()] } }
       })
+    }
+    const off = window.api.search.onProgress((p) => {
+      if (runId !== searchRunId || p.wd !== keyword) return
+      queued.push(p)
+      // 合并短时间内同时到达的站点，避免每个结果都触发整批卡片去重和重绘。
+      progressTimer ??= setTimeout(flushProgress, 50)
     })
 
     try {
@@ -484,6 +506,8 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({ search: { ...s.search, running: false, error: (err as Error).message } }))
       get().notify(`搜索失败：${(err as Error).message}`, 'danger')
     } finally {
+      if (progressTimer !== undefined) clearTimeout(progressTimer)
+      queued = []
       off()
     }
   },
@@ -491,16 +515,36 @@ export const useApp = create<AppState>((set, get) => ({
   clearSearch() {
     // 让还在路上的那一批结果作废
     searchRunId++
+    void window.api.search.cancel()
     set({ search: emptySearch() })
   },
 
   async loadDetail(siteKey, vodId) {
     const key = detailKey(siteKey, vodId)
     const cached = get().details[key]
-    if (cached) return cached
-    const detail = await window.api.detail.get(siteKey, vodId)
-    set((s) => ({ details: { ...s.details, [key]: detail } }))
-    return detail
+    if (cached && Date.now() - (detailTimes.get(key) ?? 0) < 2 * 60_000) return cached
+    const pending = detailRequests.get(key)
+    if (pending) return pending
+    const gen = catalogGeneration
+    const task = window.api.detail.get(siteKey, vodId).then((detail) => {
+      if (gen === catalogGeneration) {
+        detailTimes.delete(key)
+        detailTimes.set(key, Date.now())
+        set((s) => {
+          const details = { ...s.details, [key]: detail }
+          while (detailTimes.size > 100) {
+            const oldest = detailTimes.keys().next().value!
+            detailTimes.delete(oldest)
+            delete details[oldest]
+          }
+          return { details }
+        })
+      }
+      return detail
+    })
+    detailRequests.set(key, task)
+    try { return await task }
+    finally { if (detailRequests.get(key) === task) detailRequests.delete(key) }
   },
 
   async loadCategories() {

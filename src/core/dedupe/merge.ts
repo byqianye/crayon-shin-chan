@@ -67,21 +67,34 @@ function matchRank(name: string, keyword: string): number {
  * 同内容类型、同季数、年份相同（或至少一方缺失但片名完全一致）。
  * 这是为了不把「射雕英雄传 1983 / 2008 / 2017」这类同名不同版误合。
  */
-function canMerge(a: Vod, b: Vod): boolean {
-  const bucketA = typeBucket(a.type_name)
-  const bucketB = typeBucket(b.type_name)
+interface Identity {
+  rawName: string
+  name: string
+  year: string
+  season: ReturnType<typeof extractSeason>
+  bucket: ReturnType<typeof typeBucket>
+}
+
+function identity(vod: Vod): Identity {
+  return { rawName: vod.vod_name, name: normalizeName(vod.vod_name), year: extractYear(vod.vod_year, vod.vod_name),
+    season: extractSeason(vod.vod_name), bucket: typeBucket(vod.type_name) }
+}
+
+function canMerge(a: Identity, b: Identity): boolean {
+  const bucketA = a.bucket
+  const bucketB = b.bucket
   // 网页规则站拿不到 type_name（归为 other），不能因此把同一部片拆成两条；
   // 只有两边都是已知类型且不同才拒绝合并。
   if (bucketA !== 'other' && bucketB !== 'other' && bucketA !== bucketB) return false
-  if (extractSeason(a.vod_name) !== extractSeason(b.vod_name)) return false
+  if (a.season !== b.season) return false
 
-  const yearA = extractYear(a.vod_year, a.vod_name)
-  const yearB = extractYear(b.vod_year, b.vod_name)
+  const yearA = a.year
+  const yearB = b.year
   if (yearA && yearB && yearA !== yearB) return false
   if (!yearA || !yearB) {
-    return normalizeName(a.vod_name) === normalizeName(b.vod_name)
+    return a.name === b.name
   }
-  return titleSimilarity(a.vod_name, b.vod_name) >= 0.92
+  return titleSimilarity(a.rawName, b.rawName) >= 0.92
 }
 
 /**
@@ -114,14 +127,39 @@ export function mergeResults(
   }
 
   // 精确键分组后，对「类型/季数/年份」一致、只是片名写法略有差异的组做一次兜底合并。
-  const groups: { key: string; list: Vod[] }[] = []
+  const groups: { key: string; list: Vod[]; identity: Identity; index: number }[] = []
+  const byYear = new Map<string, typeof groups>()
+  const byName = new Map<string, typeof groups>()
   for (const [key, list] of exact) {
-    const candidate = list[0]
-    const target = groups.find((group) => canMerge(group.list[0], candidate))
+    const candidate = identity(list[0])
+    const yearKey = JSON.stringify([candidate.season, candidate.year, candidate.name.length])
+    const nameKey = JSON.stringify([candidate.season, candidate.name])
+    const sameName = byName.get(nameKey) ?? []
+    const candidates = sameName.filter((group) => !candidate.year || !group.identity.year || group.identity.year === candidate.year)
+    if (candidate.year) {
+      const length = candidate.name.length
+      for (let size = Math.ceil(length * 0.92 - 1e-9); size <= Math.floor(length / 0.92 + 1e-9); size++) {
+        // 不足 13 字时，一次编辑的相似度已低于阈值，只需上面的精确片名匹配。
+        if (Math.max(size, length) < 13) continue
+        const related = byYear.get(JSON.stringify([candidate.season, candidate.year, size])) ?? []
+        for (const group of related) if (group.identity.name !== candidate.name) candidates.push(group)
+      }
+    }
+    // 缺年份/类型的匹配不是传递关系，必须保持原来的「第一个匹配组」规则。
+    let target: (typeof groups)[number] | undefined
+    for (const group of candidates) {
+      if ((!target || group.index < target.index) && canMerge(group.identity, candidate)) target = group
+    }
     if (target) {
       target.list.push(...list)
     } else {
-      groups.push({ key, list: [...list] })
+      const group = { key, list: [...list], identity: candidate, index: groups.length }
+      groups.push(group)
+      const years = byYear.get(yearKey) ?? []
+      years.push(group)
+      byYear.set(yearKey, years)
+      sameName.push(group)
+      byName.set(nameKey, sameName)
     }
   }
 

@@ -29,6 +29,12 @@ export function normalizeSourceUrl(raw: string): string {
   }
 }
 
+/** 订阅内的相对资源以订阅地址为基准；模板占位符仍由对应适配器替换。 */
+export function resolveSourceAddress(raw: string, baseUrl?: string): string {
+  if (!raw || !baseUrl || !/^https?:\/\//i.test(baseUrl) || /^[a-z][\w+.-]*:/i.test(raw)) return raw
+  return new URL(raw, baseUrl).toString().replace(/%7B/gi, '{').replace(/%7D/gi, '}')
+}
+
 /** 从地址里取一个可读的默认名称 */
 export function sourceHostName(raw: string): string {
   if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\')) {

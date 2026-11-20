@@ -54,6 +54,17 @@ interface PendingCall {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
+  cleanup: () => void
+}
+
+function waitWithSignal<T>(task: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return task
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(new DOMException('搜索已取消', 'AbortError'))
+    signal.addEventListener('abort', abort, { once: true })
+    task.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+    if (signal.aborted) abort()
+  })
 }
 
 function hostRoot(): string {
@@ -88,6 +99,7 @@ class SpiderHostClient {
   private pending = new Map<number, PendingCall>()
   private nextId = 1
   private opened = new Set<string>()
+  private opening = new Map<string, Promise<void>>()
   private idleTimer: NodeJS.Timeout | null = null
   private timedOut = 0
 
@@ -157,25 +169,35 @@ class SpiderHostClient {
         if (!waiter) return
         this.pending.delete(message.id)
         clearTimeout(waiter.timer)
+        waiter.cleanup()
         this.timedOut = 0
         if (message.ok) waiter.resolve(message.data)
         else waiter.reject(new Error(message.error || 'Spider 调用失败'))
       })
 
       child.once('error', (error) => {
-        this.child = null
-        this.ready = null
-        this.timedOut = 0
+        if (this.child === child) {
+          this.child = null
+          this.ready = null
+          this.timedOut = 0
+        }
         finish(error)
+      })
+      child.stdin.on('error', (error) => {
+        finish(error)
+        if (this.child === child) void this.stop()
       })
       child.once('exit', () => {
         if (!settled) finish(new Error('Spider 宿主提前退出'))
+        if (this.child !== child) return
         this.child = null
         this.ready = null
         this.opened.clear()
+        this.opening.clear()
         this.timedOut = 0
         for (const waiter of this.pending.values()) {
           clearTimeout(waiter.timer)
+          waiter.cleanup()
           waiter.reject(new Error('Spider 宿主已退出'))
         }
         this.pending.clear()
@@ -190,7 +212,7 @@ class SpiderHostClient {
       await ready
       this.touch()
     } catch (error) {
-      this.ready = null
+      if (!this.child || this.child === child) this.ready = null
       throw error
     }
   }
@@ -200,13 +222,26 @@ class SpiderHostClient {
     await this.ready
   }
 
-  private send<T>(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<T> {
+  private send<T>(method: string, params: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted()
     const child = this.child
     if (!child) throw new Error('Spider 宿主未启动')
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {
+      const cancelRemote = (): void => {
+        if (child.stdin.writable) child.stdin.write(JSON.stringify({ id: 0, method: 'cancel', params: { id } }) + '\n')
+      }
+      const abort = (): void => {
+        if (!this.pending.delete(id)) return
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', abort)
+        cancelRemote()
+        reject(new DOMException('搜索已取消', 'AbortError'))
+      }
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        signal?.removeEventListener('abort', abort)
+        cancelRemote()
         reject(new Error(`Spider ${method} 超时（${Math.round(timeoutMs / 1000)}s）`))
         this.timedOut++
         if (this.timedOut >= 3) {
@@ -218,12 +253,16 @@ class SpiderHostClient {
       this.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
         reject,
-        timer
+        timer,
+        cleanup: () => signal?.removeEventListener('abort', abort)
       })
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) { abort(); return }
       try {
         child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
       } catch (error) {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', abort)
         this.pending.delete(id)
         reject(error as Error)
       }
@@ -234,24 +273,33 @@ class SpiderHostClient {
     site: Site,
     method: string,
     params: Record<string, unknown> = {},
-    timeoutMs = 35_000
+    timeoutMs = 35_000,
+    signal?: AbortSignal
   ): Promise<T> {
     if (!site.spiderClass) throw new Error('该站点没有 Spider 实现类')
-    await this.ensureReady()
-    if (!this.opened.has(site.key)) {
-      const artifacts = await prepareSpiderJar(site)
-      const ext = await prepareSiteExt(site, artifacts.raw)
-      await this.send('open', {
-        site: site.key,
-        jar: artifacts.jar,
-        raw: artifacts.raw,
-        class: site.spiderClass,
-        ext
-      }, 90_000)
-      this.opened.add(site.key)
+    signal?.throwIfAborted()
+    await waitWithSignal(this.ensureReady(), signal)
+    const child = this.child
+    const runtimeKey = site.key + ':' + createHash('md5').update(JSON.stringify([site.sourceId, site.jar, site.spiderClass, site.ext])).digest('hex')
+    if (!this.opened.has(runtimeKey)) {
+      let task = this.opening.get(runtimeKey)
+      if (!task) {
+        task = (async () => {
+          const artifacts = await prepareSpiderJar(site)
+          const ext = await prepareSiteExt(site, artifacts.raw)
+          if (this.child !== child) throw new Error('Spider 宿主已更换，请重试')
+          await this.send('open', { site: runtimeKey, jar: artifacts.jar, raw: artifacts.raw, class: site.spiderClass, ext }, 90_000)
+          if (this.child === child) this.opened.add(runtimeKey)
+        })()
+        this.opening.set(runtimeKey, task)
+        void task.finally(() => { if (this.opening.get(runtimeKey) === task) this.opening.delete(runtimeKey) }).catch(() => undefined)
+      }
+      await waitWithSignal(task, signal)
     }
+    signal?.throwIfAborted()
+    if (this.child !== child) throw new Error('Spider 宿主已更换，请重试')
     this.touch()
-    return this.send<T>(method, { site: site.key, ...params }, timeoutMs)
+    return this.send<T>(method, { ...params, site: runtimeKey }, timeoutMs, signal)
   }
 
   async stop(): Promise<void> {
@@ -263,8 +311,10 @@ class SpiderHostClient {
     this.child = null
     this.ready = null
     this.opened.clear()
+    this.opening.clear()
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timer)
+      waiter.cleanup()
       waiter.reject(new Error('Spider 宿主已退出'))
     }
     this.pending.clear()
@@ -540,12 +590,13 @@ export function spiderItemToVod(raw: Record<string, unknown>, site: Site): Vod {
   }
 }
 
-export async function spiderSearch(site: Site, wd: string, limit: number): Promise<Vod[]> {
+export async function spiderSearch(site: Site, wd: string, limit: number, signal?: AbortSignal): Promise<Vod[]> {
   const payload = await host.call<{ list?: Array<Record<string, unknown>> }>(
     site,
     'search',
     { key: wd, quick: false },
-    (site.timeout ?? 35) * 1000
+    (site.timeout ?? 35) * 1000,
+    signal
   )
   const list = Array.isArray(payload?.list) ? payload.list : []
   return list
@@ -558,9 +609,10 @@ export async function spiderCall<T = unknown>(
   site: Site,
   method: string,
   params: Record<string, unknown> = {},
-  timeoutMs?: number
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<T> {
-  return host.call<T>(site, method, params, timeoutMs ?? (site.timeout ?? 35) * 1000)
+  return host.call<T>(site, method, params, timeoutMs ?? (site.timeout ?? 35) * 1000, signal)
 }
 
 /** 用户打开某个 Spider 站点时预热：提前完成 jar 转换/解密，首次搜索少等几秒 */
@@ -627,7 +679,8 @@ export async function spiderPlayerUrl(site: Site, flag: string, id: string): Pro
     direct: false,
     parseName: 'Spider',
     ms: Date.now() - started,
-    attempts: []
+    attempts: [],
+    header: payload.header && typeof payload.header === 'object' ? payload.header : undefined
   }
 }
 

@@ -173,6 +173,8 @@ export interface ParseResult {
   ms: number
   attempts: ParseAttempt[]
   error?: string
+  /** Spider 播放响应附带的媒体请求头，由主进程按媒体 origin 应用。 */
+  header?: Record<string, string>
 }
 
 export interface ParseTestResult {

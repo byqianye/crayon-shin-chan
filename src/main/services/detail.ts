@@ -2,8 +2,9 @@ import * as cheerio from 'cheerio'
 import type { Cheerio } from 'cheerio'
 import type { AnyNode } from 'domhandler'
 import type { Episode, Line, Site, Vod, VodDetail } from '@shared/types'
-import { asArray, buildCmsUrl, isCmsOk } from './cms'
-import { fetchText, parseLooseJson } from './http'
+import { asArray, isCmsOk } from './cms'
+import { requestCms } from './cmsApi'
+import { fetchText } from './http'
 import { cmsItemToVod } from './search'
 import { extract, selectAll } from './htmlRules'
 import { recordSiteResult } from './health'
@@ -43,11 +44,7 @@ export function parseLines(from: string, url: string, note = ''): Line[] {
 }
 
 async function detailCms(site: Site, vodId: string): Promise<VodDetail> {
-  const timeout = site.timeout ?? (await getSettings()).timeout
-  const url = buildCmsUrl(site, { ac: 'detail', ids: vodId })
-  const header = await resolveHeader(site, url)
-  const text = await fetchText(url, { header, timeout })
-  const payload = parseLooseJson<Record<string, unknown>>(text)
+  const payload = await requestCms(site, { ac: 'detail', ids: vodId })
   if (!isCmsOk(payload)) {
     throw new Error(`接口返回异常：${String(payload?.msg ?? 'code 非成功')}`)
   }

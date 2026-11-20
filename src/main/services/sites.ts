@@ -1,8 +1,11 @@
 import * as cheerio from 'cheerio'
 import type { Site, TestResult } from '@shared/types'
 import { normalizeSourceUrl } from '@shared/url'
-import { buildCmsUrl, isCmsOk } from './cms'
-import { fetchText, matchHeaderRules } from './http'
+import { isCmsOk } from './cms'
+import { requestCms } from './cmsApi'
+import { fetchText } from './http'
+import { resolveHeader } from './headers'
+export { resolveHeader } from './headers'
 import { listLocalSites, localToSite } from './localSites'
 import { listTombstones } from './tombstones'
 import { getSettings } from './settings'
@@ -119,20 +122,6 @@ export async function setSiteOrder(key: string, order: number): Promise<void> {
   await writeOverrides(map)
 }
 
-/** 合并全局 headers 规则与站点自身请求头 */
-export async function resolveHeader(site: Site, url: string): Promise<Record<string, string>> {
-  const sources = await listSources()
-  const rules = sources
-    .filter((s) => s.enabled)
-    .flatMap((s) => getParsed(s.id)?.headers ?? [])
-  const settings = await getSettings()
-  return {
-    'User-Agent': settings.userAgent,
-    ...matchHeaderRules(url, rules),
-    ...(site.header ?? {})
-  }
-}
-
 /** 连通性测试：发一次最小请求，能解析出结果就算通 */
 export async function testSite(key: string): Promise<TestResult> {
   const site = await getSite(key)
@@ -186,10 +175,7 @@ export async function testSite(key: string): Promise<TestResult> {
     }
 
     if (site.type === 3 || site.type === 4) {
-      const url = buildCmsUrl(site, { ac: 'detail', pg: 1 })
-      const header = await resolveHeader(site, url)
-      const text = await fetchText(url, { header, timeout })
-      const payload = JSON.parse(text.replace(/^\uFEFF/, '').trim())
+      const payload = await requestCms(site, { ac: 'detail', pg: 1 })
       if (!isCmsOk(payload)) {
         return { ok: false, ms: Date.now() - start, message: `接口返回异常：${(payload as any).msg ?? 'code 非成功'}` }
       }
