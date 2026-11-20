@@ -225,7 +225,7 @@ export function Live(): JSX.Element {
       artRef.current = null
       art.destroy(false)
     }
-  }, [url, resolved?.referer, settings?.accent, notify])
+  }, [url, resolved?.referer, settings?.accent, notify, picking])
 
   /** 点频道：先挑一条体检通过的线路，没有就当场探一遍 */
   const play = useCallback(

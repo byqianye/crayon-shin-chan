@@ -132,69 +132,11 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 启动开发窗口
-        shell: pwsh
-        run: |
-          $binary = Join-Path $env:GITHUB_WORKSPACE 'node_modules\electron\dist\electron.exe'
-          if (-not (Test-Path $binary)) { throw "Electron 二进制不存在：$binary" }
-          $log = Join-Path $env:RUNNER_TEMP 'dev.log'
-          $err = Join-Path $env:RUNNER_TEMP 'dev.err.log'
-          # 不能用 -WindowStyle Hidden：隐藏窗口会让 Electron 起不了 UI 线程，
-          # remote-debugging-port 永远不会监听。runner 是无交互会话，直接前台启动。
-          $process = Start-Process -FilePath 'node' `
-            -ArgumentList @(
-              'node_modules/electron-vite/bin/electron-vite.js',
-              'dev',
-              '--',
-              '--remote-debugging-port=9222',
-              '--no-sandbox',
-              '--disable-gpu',
-              '--disable-software-rasterizer',
-              '--disable-dev-shm-usage'
-            ) `
-            -WorkingDirectory $env:GITHUB_WORKSPACE `
-            -RedirectStandardOutput $log `
-            -RedirectStandardError $err `
-            -PassThru
-          $process.Id | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'dev.pid') -Encoding ascii
-
-      - name: 等待调试端口
-        shell: pwsh
-        run: |
-          # runner 首次运行 Electron 需要初始化 GPU 缓存并下载/解压二进制，
-          # 实测可能超过 6 分钟，因此按 10 分钟窗口轮询，并在超时时打印日志。
-          $log = Join-Path $env:RUNNER_TEMP 'dev.log'
-          $err = Join-Path $env:RUNNER_TEMP 'dev.err.log'
-          for ($i = 0; $i -lt 200; $i++) {
-            try {
-              $response = Invoke-WebRequest -Uri 'http://127.0.0.1:9222/json/version' -UseBasicParsing -TimeoutSec 2
-              if ($response.StatusCode -eq 200) { Write-Host 'CDP 已就绪'; exit 0 }
-            } catch {
-              if ($i % 15 -eq 0) {
-                $tail = (Get-Content $log -Tail 3 -ErrorAction SilentlyContinue) -join ' / '
-                Write-Host "[wait $i] $tail"
-              }
-              Start-Sleep -Seconds 3
-            }
-          }
-          Get-Content $log -Tail 100 -ErrorAction SilentlyContinue
-          Get-Content $err -Tail 60 -ErrorAction SilentlyContinue
-          throw '调试端口 9222 在 600 秒内没有就绪'
+      - name: 构建生产包
+        run: pnpm build
 
       - name: 跑端到端自检
-        run: node scripts/selftest.mjs
-
-      - name: 关闭开发窗口
-        if: always()
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $pidFile = Join-Path $env:RUNNER_TEMP 'dev.pid'
-          if (Test-Path $pidFile) {
-            $devPid = (Get-Content $pidFile | Select-Object -First 1).Trim()
-            if ($devPid) { taskkill /PID $devPid /T /F 2>$null }
-          }
-          Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        run: node scripts/ci-selftest.mjs
 
       - name: 保存失败日志
         if: failure()

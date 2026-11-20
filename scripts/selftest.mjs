@@ -499,6 +499,12 @@ check(
 )
 
 await goto('#/search', '分类浏览')
+// 桩的分类每页只有 2 条，卡片高度不够，哨兵一上来就在视口内，
+// 浏览器会立刻自动续页，测不到「滚到底」这个动作。给网格撑高，
+// 让哨兵先留在视口外，再由下面的 scrollTop 触发。
+await evalJs(
+  "(() => { const s = document.createElement('style'); s.id = 'selftest-tall-grid'; s.textContent = '.poster-grid { min-height: 2400px; }'; document.head.appendChild(s) })()"
+)
 const catCards = await waitFor("document.querySelectorAll('.cat-card').length", (v) => v >= 6)
 check('目录页列出分类卡片', catCards, (v) => v >= 6)
 check(
@@ -594,6 +600,7 @@ const headAfterMore = await evalJs(
 if (headBeforeMore) {
   check('翻页后开头几张卡的位置没变', headAfterMore, headBeforeMore)
 }
+await evalJs("document.getElementById('selftest-tall-grid')?.remove()")
 
 check(
   '分类浏览全程没有 JS 异常',
@@ -658,7 +665,7 @@ check('切到自检卫视分组只剩 1 个频道', multi, 1)
 check(
   '同名频道跨源合并成 2 条线路',
   await evalJs("document.querySelector('.live-channel-lines')?.textContent ?? ''"),
-  '2 线'
+  (v) => /^2(?:\/2)? 线$/.test(String(v))
 )
 
 await evalJs("document.querySelector('.live-channel').click()")
@@ -666,6 +673,12 @@ await evalJs("document.querySelector('.live-channel').click()")
 // 而单条探测的超时上限是 12s（liveHealth.ts 的 min(settings.timeout, 12)）。
 // 等待必须明显大于 12s，否则预热还没轮到该频道时会假失败（曾偶发 176/177）。
 const mounted = await waitFor("document.querySelectorAll('.live-stage video').length", (v) => v >= 1, 30000)
+if (!mounted) {
+  console.log('（诊断）直播舞台', await evalJs(
+    "JSON.stringify({ stage: document.querySelector('.live-stage')?.className ?? 'none', msg: document.querySelector('.live-stage-msg-desc')?.textContent ?? '', name: document.querySelector('.live-stage-name')?.textContent ?? '', url: document.querySelector('.player-url-text')?.textContent ?? '', probing: document.querySelector('.live-channels-head')?.textContent ?? '' })"
+  ))
+  console.log('（诊断）线路体检', await evalJs('window.api.live.health().then((h) => JSON.stringify(h))'))
+}
 check('点频道后播放器挂起来了', mounted, (v) => v >= 1)
 check(
   '播放器上标出当前频道',

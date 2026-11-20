@@ -84,6 +84,20 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      - name: End-to-end selftest
+        run: node scripts/ci-selftest.mjs
+
+      - name: Upload selftest logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-selftest-logs
+          path: |
+            ${{ runner.temp }}/dev.log
+            ${{ runner.temp }}/dev.err.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Package Windows installer
         run: pnpm build:win
 

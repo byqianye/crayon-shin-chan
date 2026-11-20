@@ -7,8 +7,10 @@
 - 修复大量 jar 在 `init` 阶段直接报 `Stub!` / `NoSuchMethodError` 的问题；
   爱盼/百酷/搬运等使用 `Pan.init` 递归的站点仍会在 Spider 自身逻辑里栈溢出。
 - 连通性测试遇到“首页为空”的 Spider 会再探测一次搜索，避免把只有搜索的站点误判为不可用。
+- 修复电视直播里「频道还没体检完就点开，地址出来了但播放器不挂载」的问题。
 - 工程：新增 GitHub Actions 的 Windows CI（类型检查、构建、宿主编译、177 项端到端自检）
-  与 tag 触发的发布流水线；发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
+  与 tag 触发的发布流水线；自检改为生产构建直接启动 Electron，发布前同样会跑一遍；
+  发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
 
 ## v0.1.2 — Spider 运行时随包发布
 

@@ -6,10 +6,11 @@ import { promises as fs } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const [ciRaw, releaseRaw, packageJson] = await Promise.all([
+const [ciRaw, releaseRaw, packageJson, selftestRunner] = await Promise.all([
   fs.readFile(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'),
   fs.readFile(join(root, '.github', 'workflows', 'release.yml'), 'utf8'),
-  fs.readFile(join(root, 'package.json'), 'utf8').then(JSON.parse)
+  fs.readFile(join(root, 'package.json'), 'utf8').then(JSON.parse),
+  fs.readFile(join(root, 'scripts', 'ci-selftest.mjs'), 'utf8')
 ])
 
 // 工作流在 Windows 上检出后可能是 CRLF，统一成 LF 再做结构断言
@@ -26,11 +27,12 @@ check('CI 使用 Windows runner', /runs-on: windows-latest/.test(ci))
 check('CI 使用冻结锁文件', /pnpm install --frozen-lockfile/.test(ci))
 check('CI 编译 Spider 宿主', /pnpm spider:build/.test(ci))
 check('CI 编译 unidbg 桥', /pnpm spider:unidbg/.test(ci))
-check('CI 运行端到端自检', /node scripts\/selftest\.mjs/.test(ci))
-check('自检等待窗口足够长', /600 秒内没有就绪/.test(ci))
-check('清理步骤不会掩盖失败', /continue-on-error: true/.test(ci))
+check('CI 构建生产包后运行端到端自检', /pnpm build/.test(ci) && /node scripts\/ci-selftest\.mjs/.test(ci))
+check('自检直接启动 Electron 而不是 dev server', /electron\.exe/.test(selftestRunner))
+check('自检等待窗口为 120 秒', /READY_TIMEOUT_MS = 120_000/.test(selftestRunner))
 check('发布工作流由 tag 或手动触发', /tags: \['v\*'\]/.test(release) && /workflow_dispatch:/.test(release))
 check('发布工作流生成精简 JRE', /pnpm spider:runtime/.test(release))
+check('发布前运行端到端自检', /node scripts\/ci-selftest\.mjs/.test(release))
 check('发布工作流校验产物', /node scripts\/release-check\.mjs/.test(release))
 check('发布工作流生成校验清单', /--write-checksums/.test(release))
 check('发布工作流生成发布说明', /node scripts\/release-notes\.mjs/.test(release))
@@ -44,4 +46,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 18 项工作流约束通过')
+console.log('[check-ci] 19 项工作流约束通过')
