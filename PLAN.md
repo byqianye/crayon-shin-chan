@@ -414,11 +414,27 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
   **draft Release**。已存在的正式 Release 会被拒绝覆盖，资产不足 5 个直接失败。
 - 新增守卫脚本：`release-check.mjs`（版本/CHANGELOG/产物一致性）、
   `release-notes.mjs`（从 CHANGELOG 生成发布说明）、`check-lockfile.mjs`、
-  `check-ci.mjs`（16 项工作流结构约束）。
+  `check-ci.mjs`（25 项工作流结构约束）。
 - 统一包管理器：`packageManager: pnpm@11.25.0`，删除过期且包名错误的
   `package-lock.json`；CI 使用 `pnpm install --frozen-lockfile`。
 - 本地已验证：`actionlint` 对两个工作流报 0 问题；`pnpm@11.25.0` 在只读副本上
   `--frozen-lockfile` 通过；两个负向用例（版本 0.1.4、CHANGELOG 9.9.9）均以
   退出码 1 失败；typecheck、build、177/177 自检通过。
-- 尚未完成：没有推送 tag，也没有创建 GitHub Release。正式发布前需要用户在
-  draft 上确认资产与说明。
+- 2026-11-20 实跑收口：CI run 44673884511 三个 job 全绿；Release run 44677183907
+  全绿；`v0.1.3` tag 已推送，draft Release id 452286250 已生成，5 个资产齐全
+  （exe / blockmap / zip / latest.yml / SHA256SUMS.txt）。draft 尚未转正式，
+  正式发布前仍需用户确认。
+
+## 17. Spider 真实性矩阵（2026-11-20）
+
+- 新增 `scripts/spider-matrix.mjs`：每个用例独立 Node 进程 + 独立 JVM，逐类跑
+  `home → category → search → detail → player`，输出 Markdown/JSON；单个 jar
+  卡死或崩溃不会拖垮整批。
+- 新增 `scripts/spider-contract.mjs`：合成 10 个 Spider 契约用例，覆盖缺类、
+  类型不对、Android API 缺失、native 加固、超时、TLS、空播放字段、非法 JSON、
+  缺方法实现和正常全链路；已在本机 10/10 通过，并接入 CI。
+- 新增 `spider-tests/cases.json`：固定 15 个常见 `csp_*` 类（XYQ.jar）；新增
+  `.github/workflows/spider-live.yml` 每周一定时跑真实矩阵并上传 artifact。
+- 2026-11-20 本机首轮真实矩阵（关键词「电影」）：`usable=1`（Ikanbot）、
+  `search_empty_category_ok=1`（New6v：分类 18 条、详情 1 线 1 集、播放返回
+  解析页）、`empty_search=13`。源站波动大，这组数字只代表当次，不承诺当前可用性。

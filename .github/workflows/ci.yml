@@ -113,6 +113,9 @@ jobs:
           $missing = $required | Where-Object { -not (Test-Path $_) }
           if ($missing) { throw "缺少产物：$($missing -join ', ')" }
 
+      - name: Spider 契约矩阵
+        run: node scripts/spider-contract.mjs
+
   selftest:
     name: 端到端自检
     runs-on: windows-latest

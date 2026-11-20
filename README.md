@@ -99,6 +99,20 @@ $env:SPIDER_JAVA = "C:\path\to\java.exe"
 pnpm spider:smoke
 ```
 
+### Spider 真实性矩阵
+
+单条搜索成功不代表站点完整可用。仓库里有一套分层的 Spider 矩阵：
+
+- **契约矩阵**（每次 CI）：用合成 Spider 覆盖缺类、类型不对、Android API 缺失、native 加固、超时、TLS、空播放字段、非法 JSON 等分类，不访问外网。
+- **真实源矩阵**（每周定时）：固定 15 个常见 `csp_*` 类，逐类跑 `home → category → search → detail → player`，报告作为 artifact 保存，不阻断每次提交。
+
+```powershell
+pnpm spider:contract
+pnpm spider:matrix --out "$env:TEMP\spider-reports"
+```
+
+分类口径和用例说明见 [`spider-tests/README.md`](spider-tests/README.md)。
+
 当前边界：依赖 WebView 的 Spider、Python/JS Spider、`DexNative` 加固类和
 会自递归调用 `Pan.init` 的站点仍可能失败；失败原因会在影视源页或日志中明确显示。
 
@@ -121,6 +135,8 @@ node node_modules/electron/install.js
 | `pnpm spider:unidbg` | 编译 FishGuard/Unidbg 解密桥（需要 JDK 17） |
 | `pnpm spider:runtime` | 生成精简 JRE（需要 JDK 17） |
 | `pnpm spider:smoke` | 用真实 spider 跑 search → detail → player 冒烟；需设置 `SPIDER_JAR` 与 `SPIDER_JAVA` |
+| `pnpm spider:contract` | 合成 Spider 契约矩阵（CI 每次跑） |
+| `pnpm spider:matrix` | 真实 `csp_*` 矩阵（定时任务，生成 Markdown/JSON 报告） |
 | `pnpm typecheck` | 主进程与渲染进程双工程类型检查 |
 | `pnpm build` | 产出 `out/`（主进程 / preload / 渲染进程） |
 | `pnpm build:win` | electron-builder 打包出 NSIS 安装包与免安装 zip |

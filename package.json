@@ -20,6 +20,8 @@
     "spider:unidbg": "powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/build-unidbg.ps1",
     "spider:runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/build-runtime.ps1",
     "spider:smoke": "node scripts/spider-service-smoke.mjs",
+    "spider:contract": "node scripts/spider-contract.mjs",
+    "spider:matrix": "node scripts/spider-matrix.mjs --cases spider-tests/cases.json",
     "release:check": "node scripts/release-check.mjs",
     "lockfile:check": "node scripts/check-lockfile.mjs",
     "ci:check": "node scripts/check-ci.mjs",

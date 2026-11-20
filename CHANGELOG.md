@@ -12,6 +12,9 @@
   与 tag 触发的发布流水线；自检改为生产构建直接启动 Electron，发布前同样会跑一遍；
   自检使用临时数据目录，不影响本地配置；打包显式禁用 electron-builder 隐式发布，
   发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
+- 工程：新增 Spider 真实性矩阵。每次 CI 跑 10 个合成契约用例，覆盖缺类、Android API、
+  native 加固、超时、TLS、空播放字段、非法 JSON 等分类；每周定时跑 15 个真实
+  `csp_*` 类并上传 Markdown/JSON 报告，真实源波动不阻塞提交。
 
 ## v0.1.2 — Spider 运行时随包发布
 

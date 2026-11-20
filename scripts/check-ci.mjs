@@ -6,9 +6,10 @@ import { promises as fs } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const [ciRaw, releaseRaw, packageJson, selftestRunner] = await Promise.all([
+const [ciRaw, releaseRaw, liveRaw, packageJson, selftestRunner] = await Promise.all([
   fs.readFile(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'),
   fs.readFile(join(root, '.github', 'workflows', 'release.yml'), 'utf8'),
+  fs.readFile(join(root, '.github', 'workflows', 'spider-live.yml'), 'utf8'),
   fs.readFile(join(root, 'package.json'), 'utf8').then(JSON.parse),
   fs.readFile(join(root, 'scripts', 'ci-selftest.mjs'), 'utf8')
 ])
@@ -16,6 +17,7 @@ const [ciRaw, releaseRaw, packageJson, selftestRunner] = await Promise.all([
 // 工作流在 Windows 上检出后可能是 CRLF，统一成 LF 再做结构断言
 const ci = ciRaw.replace(/\r\n/g, '\n')
 const release = releaseRaw.replace(/\r\n/g, '\n')
+const live = liveRaw.replace(/\r\n/g, '\n')
 
 const failed = []
 function check(name, condition) {
@@ -27,6 +29,7 @@ check('CI 使用 Windows runner', /runs-on: windows-latest/.test(ci))
 check('CI 使用冻结锁文件', /pnpm install --frozen-lockfile/.test(ci))
 check('CI 编译 Spider 宿主', /pnpm spider:build/.test(ci))
 check('CI 编译 unidbg 桥', /pnpm spider:unidbg/.test(ci))
+check('CI 运行 Spider 契约矩阵', /node scripts\/spider-contract\.mjs/.test(ci))
 check('CI 构建生产包后运行端到端自检', /pnpm build/.test(ci) && /node scripts\/ci-selftest\.mjs/.test(ci))
 check('自检直接启动 Electron 而不是 dev server', /electron\.exe/.test(selftestRunner))
 check('自检等待窗口为 120 秒', /READY_TIMEOUT_MS = 120_000/.test(selftestRunner))
@@ -44,9 +47,11 @@ check('发布资产缺失时报错', /没有找到可上传的发布资产/.test
 check('draft 任务在 gh 前检出仓库', /Publish draft GitHub Release[\s\S]*actions\/checkout@v4/.test(release) && /GH_REPO: \$\{\{ github\.repository \}\}/.test(release))
 check('packageManager 固定 pnpm 版本', packageJson.packageManager === 'pnpm@11.25.0')
 check('打包脚本禁止 electron-builder 隐式发布', /--publish never/.test(packageJson.scripts['build:win']))
+check('真实 Spider 矩阵由定时任务触发', /schedule:/.test(live) && /spider-matrix\.mjs/.test(live))
+check('真实 Spider 矩阵报告作为 artifact 保存', /upload-artifact@v4/.test(live) && /spider-reports\//.test(live))
 
 if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 22 项工作流约束通过')
+console.log('[check-ci] 25 项工作流约束通过')

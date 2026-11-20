@@ -1,0 +1,99 @@
+{
+  "schema": "crayon-spider-matrix/1",
+  "note": "XYQ.jar 里的常见 csp_* 类；真实源会随站点和网络变化，矩阵只记录真实现状，不作为每次提交的阻断项。",
+  "jar": "https://raw.githubusercontent.com/gaotianliuyun/gao/master/jar/XYQ.jar",
+  "keyword": "庆余年",
+  "timeout": 20,
+  "cases": [
+    {
+      "key": "mp4mov",
+      "name": "Mp4电影",
+      "className": "com.github.catvod.spider.Mp4Mov",
+      "ext": "https://www.padmp4.com"
+    },
+    {
+      "key": "new6v",
+      "name": "新6V",
+      "className": "com.github.catvod.spider.New6v",
+      "ext": "https://www.xb6v.com"
+    },
+    {
+      "key": "seedhub",
+      "name": "SeedHub",
+      "className": "com.github.catvod.spider.SeedHub",
+      "ext": "https://www.seedhub.cc"
+    },
+    {
+      "key": "kubacl",
+      "name": "酷吧电影",
+      "className": "com.github.catvod.spider.KubaCL",
+      "ext": "https://www.kubady2.com"
+    },
+    {
+      "key": "meijutt",
+      "name": "美剧天堂",
+      "className": "com.github.catvod.spider.MeijuTT",
+      "ext": "https://www.meijutt.net"
+    },
+    {
+      "key": "czsapp",
+      "name": "厂长资源",
+      "className": "com.github.catvod.spider.Czsapp",
+      "ext": "https://www.czys.top"
+    },
+    {
+      "key": "bdys",
+      "name": "哔嘀影视",
+      "className": "com.github.catvod.spider.Bdys",
+      "ext": "https://www.yjys02.com"
+    },
+    {
+      "key": "jianpian",
+      "name": "荐片",
+      "className": "com.github.catvod.spider.JianPian",
+      "ext": "http://39.108.238.168:20000"
+    },
+    {
+      "key": "ikanbot",
+      "name": "Ikanbot",
+      "className": "com.github.catvod.spider.Ikanbot",
+      "ext": "https://v.aikanbot.com"
+    },
+    {
+      "key": "sp360",
+      "name": "360影视",
+      "className": "com.github.catvod.spider.SP360",
+      "ext": ""
+    },
+    {
+      "key": "xunlei8",
+      "name": "迅雷吧",
+      "className": "com.github.catvod.spider.Xunlei8",
+      "ext": ""
+    },
+    {
+      "key": "kuaikan",
+      "name": "快看影视",
+      "className": "com.github.catvod.spider.Kuaikan",
+      "ext": ""
+    },
+    {
+      "key": "ddys",
+      "name": "低端影视",
+      "className": "com.github.catvod.spider.Ddys",
+      "ext": ""
+    },
+    {
+      "key": "meijumi",
+      "name": "美剧迷",
+      "className": "com.github.catvod.spider.MeijuMi",
+      "ext": ""
+    },
+    {
+      "key": "yj1211",
+      "name": "JustLive",
+      "className": "com.github.catvod.spider.Yj1211",
+      "ext": ""
+    }
+  ]
+}
