@@ -120,6 +120,9 @@ async function createWindow(): Promise<void> {
     minWidth: 1100,
     minHeight: 700,
     show: false,
+    icon: app.isPackaged
+      ? join(__dirname, '../renderer/icon.png')
+      : join(app.getAppPath(), 'src/renderer/public/icon.png'),
     // 纯白风格：先把底色刷白，避免启动瞬间的黑屏闪烁
     backgroundColor: '#ffffff',
     autoHideMenuBar: true,

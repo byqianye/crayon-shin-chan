@@ -28,6 +28,7 @@ extraResources:
 
 # Windows 目标：NSIS 安装包 + 免安装 zip
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]

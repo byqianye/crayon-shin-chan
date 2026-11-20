@@ -29,7 +29,7 @@ export default function App(): JSX.Element {
   if (!ready) {
     return (
       <div className="boot">
-        <div className="boot-logo">T</div>
+        <img className="boot-logo" src="./icon.png" alt="蜡笔小新" width={52} height={52} />
         <div className="boot-text">正在加载本地配置…</div>
       </div>
     )
@@ -72,7 +72,7 @@ function FirstRun(): JSX.Element {
   return (
     <div className="page">
       <div className="first-run">
-        <div className="first-run-logo">蜡</div>
+        <img className="first-run-logo" src="./icon.png" alt="" width={52} height={52} />
         <h1 className="first-run-title">欢迎使用 蜡笔小新</h1>
         <p className="first-run-desc">
           这是一个纯白极简的 Windows 影视聚合客户端。软件本身不提供任何内容，

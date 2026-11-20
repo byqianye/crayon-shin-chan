@@ -27,6 +27,7 @@ function check(name, condition) {
 check('CI 在 push/PR 触发', /^ {2}pull_request:/m.test(ci) && /^ {2}push:/m.test(ci))
 check('CI 使用 Windows runner', /runs-on: windows-latest/.test(ci))
 check('CI 使用冻结锁文件', /pnpm install --frozen-lockfile/.test(ci))
+check('CI 校验应用图标同步', /pnpm icon:check/.test(ci))
 check('CI 编译 Spider 宿主', /pnpm spider:build/.test(ci))
 check('CI 编译 unidbg 桥', /pnpm spider:unidbg/.test(ci))
 check('CI 运行 Spider 契约矩阵', /node scripts\/spider-contract\.mjs/.test(ci))
@@ -57,4 +58,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 28 项工作流约束通过')
+console.log('[check-ci] 29 项工作流约束通过')

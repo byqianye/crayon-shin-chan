@@ -1,5 +1,7 @@
 # 蜡笔小新
 
+<img src="build/icon.png" alt="蜡笔小新应用图标" width="128" height="128" />
+
 基于 [hgtuj5688/tvbox-desktop](https://github.com/hgtuj5688/tvbox-desktop)（MIT）二次开发的 Windows 影视聚合客户端。
 
 > 名称仅作项目代号，与《蜡笔小新》版权方无关；软件不内置、不托管、不分发任何影视内容，所有源均由用户自行配置。
@@ -11,22 +13,31 @@
 | | |
 |---|---|
 | **技术栈** | Electron 44 + React 19 + TypeScript 7 + Vite 7 + zustand，ArtPlayer + hls.js |
-| **当前版本** | `0.1.3`，实际可下载版本以 Releases 页面的发布记录为准 |
+| **当前版本** | `0.1.3`；`main` 另含尚未发布的图标、源适配与性能更新，下载版以 Releases 为准 |
 | **形态** | 便携——配置与缓存都在程序同级的 `data\`，不写 C 盘用户目录 |
 | **Spider** | 内置按需启动的 JVM 宿主，可运行带 `spider` 文件的 `csp_*` jar/dex 站点 |
-| **验证** | `pnpm selftest` 端到端 **177 项断言**；`pnpm spider:contract` **10/10**；`pnpm typecheck` / `pnpm build` |
+| **验证** | 177 项端到端断言、18 项离线服务回归、10 类 Spider 契约矩阵及并发/取消/重启检查；图标、类型与构建校验 |
 | **进度** | M1 → M4 全部完成，另有若干轮用户反馈驱动的修补 |
 
 - 设计文档（功能范围 / JSON 格式规范 / 里程碑）：见 [`功能框架.txt`](功能框架.txt)
 - 版本变更与每一轮用户反馈的修补记录：见 [`CHANGELOG.md`](CHANGELOG.md)
 - 当前进度：**M1 到 M4 全部完成** —— 配置源管理、影视源管理、聚合搜索、分类浏览、详情选集、ArtPlayer 内嵌播放与一键转外部播放器（自动探测本机装了什么）、网页线路自动换出真播放地址、电视直播（m3u / txt + 线路体检）、首页内容位、收藏与观看历史都可用
-- 已用真实公开订阅源跑通全链路：搜索 5/5 站点有响应、详情解析出多线路与剧集、分类浏览归并出 7 个大类（含子分类）、电视直播拉到 14 个分组 541 个频道并能直接放（见 `shots/player.png`、`shots/browse-sub.png`、`shots/live.png`）
+- 历史真实源验证曾取得 5/5 站点搜索响应、7 个聚合大类、14 个直播分组与 541 个频道。截图记录的是当时界面，不能代表上游当前可用性；本轮抽测失败边界见 [更新日志](CHANGELOG.md)。
+
+## 主要功能与本轮更新
+
+- **配置与影视源管理**：支持订阅 URL、本地 JSON、手动单站、多仓导入，以及启停、筛选、测试、审计与删除记录。
+- **采集源适配**：统一处理 CMS XML/JSON；识别 TVBox HTTP `type=0/1`，还原订阅中 API、jar、ext、直播和解析接口的相对地址。多仓同步保留子仓库请求头、线路标识与首页配置。
+- **搜索与分类**：流式聚合搜索、取消请求、健康源优先调度、片名/年份/季数去重与解说过滤；分类按叶子请求，较深分类可继续翻页。
+- **详情与播放**：详情请求合并和有界缓存，换源后作废旧结果；支持 ArtPlayer/HLS、解析接口、多线路、外部播放器、收藏与历史。媒体请求头按目标 HTTP origin 隔离。
+- **Spider**：完整版内置 JVM、Android 兼容层与转换工具；支持首页、分类、搜索、详情和播放调用，并提供缓存管理和分类型错误提示。具体站点仍受 jar 实现及源站限制。
+- **统一图标**：使用提供的插画，保留完整构图，覆盖 Windows 打包图标、窗口图标、侧栏、启动页与首次使用页。
 
 ---
 
 ## 下载安装
 
-去 **[Releases](https://github.com/byqianye/crayon-shin-chan/releases)** 下载。发布页提供对应版本的 Assets 时，两个文件选一个：
+去 **[Releases](https://github.com/byqianye/crayon-shin-chan/releases)** 下载。根据是否需要 Spider 选择完整版或精简版，再选择安装包或免安装包：
 
 | 文件 | 用途 |
 |---|---|
@@ -35,18 +46,18 @@
 | `CrayonShinChan-<版本>-x64-lite.exe` | **精简安装版**。不含 Spider 运行时，只支持 CMS / 网页规则 / JSON 接口，体积约小 90MB |
 | `CrayonShinChan-<版本>-x64-lite.zip` | **精简免安装版**。同上，解压即用 |
 
-当前源码对应 `0.1.3`。完整版本地产物在 `release/`，精简版在 `release-lite/`。
+当前源码版本号为 `0.1.3`。完整版本地产物在 `release/`，精简版在 `release-lite/`。**推送源码不会更新已有安装包**；本轮更新在新的安装包发布前需从源码构建体验。
 
 
 安装位置默认为 `%LOCALAPPDATA%\Programs\crayon-shin-chan`，主程序为 `蜡笔小新.exe`。安装向导里可以改，但**别装到 `C:\Program Files` 这类普通用户无法写入的目录**，否则 `data\` 可能退回系统用户目录。
 
 ### 装完就能用，不用自己找订阅
 
-首次启动会**自动装好一份内置订阅**（「公开可用源（苹果CMS 采集站）」：5 个实测存活的公开采集接口 + 1 个公开直播源 + 5 条首页内容位），并立刻同步一次。所以打开就是：
+打包版首次启动会自动添加内置「公开可用源」订阅（5 个公开采集接口 + 1 个直播源 + 5 条首页内容位），并尝试同步。源站可用时可看到：
 
 - 首页直接有「电影 · 最近更新」「电影 · 动作片」「电视剧 · 国产剧」「动漫 · 日本」「综艺 · 最近更新」五排海报
 - 顶部搜索框回车就能同时搜这 5 个站
-- 「电视直播」页有 540 多个频道
+- 「电视直播」页按订阅响应载入频道，频道数量与可播放线路随上游变化
 
 另外会登记「肥猫接口」作为内置 TVBox 远程源；首次启动只写源记录、不阻塞首屏，点播站点在「影视源」页按需启用 Spider。
 
@@ -147,6 +158,9 @@ node node_modules/electron/install.js
 | --- | --- |
 | `pnpm dev` | 启动开发窗口（渲染进程热更新） |
 | `pnpm dev:debug` | 同上，另外打开 CDP 调试端口 9222 |
+| `pnpm icon:build` | 从 `build/icon-source.png` 生成 PNG、ICO 与界面图标 |
+| `pnpm icon:check` | 检查所有图标与原图同步，不写文件 |
+| `node scripts/service-regression.mjs` | 18 项离线源适配、订阅计数、缓存、取消、请求头隔离与去重回归 |
 | `pnpm selftest` | 端到端自检：起本地桩服务器 + 驱动窗口，177 项断言 |
 | `pnpm spider:deps` | 下载 dex2jar 与 Spider 宿主依赖 |
 | `pnpm spider:build` | 编译 Spider 宿主（需要 JDK 17） |
@@ -174,17 +188,24 @@ pnpm build:win
 pnpm build:win:lite
 ```
 
-应用图标是**代码生成**的，不依赖任何设计工具：改完配色或造型跑一次就会重新写出 `build/icon.png`（512×512）与多尺寸 `build/icon.ico`（16/24/32/48/64/128/256，直接内嵌 PNG）。electron-builder 会自动认 `build/` 下的这一对文件。
+### 应用图标
+
+原始插画保存在 `build/icon-source.png`，与提供的图片内容一致。生成脚本复用项目已有的 Electron 图像缩放能力，无需额外安装图像库；不裁剪、不变形：
+
+- `build/icon.png`：512×512，用于项目展示。
+- `build/icon.ico`：16/24/32/48/64/128/256 七种尺寸，完整版与精简版打包配置均显式引用。
+- `src/renderer/public/icon.png`：256×256，构建时复制至 `out/renderer/`，供窗口、侧栏、启动与首次使用页共用。
 
 ```bash
-node scripts/make-icon.mjs
+pnpm icon:build
+pnpm icon:check
 ```
 
 ## CI 与发布
 
 `.github/workflows/ci.yml` 在每次 push 与 PR 时跑三个 Windows 任务：
 
-- 类型检查、生产构建、全部脚本语法检查、版本与 CHANGELOG 同步校验；
+- 图标同步、类型检查、离线服务回归、生产构建、全部脚本语法、锁文件、工作流约束与版本同步校验；
 - 用 JDK 17 编译 Spider 宿主与 unidbg 桥，并断言 `out/`、`lib/`、`dex-tools/` 产物齐全；
 - 再构建一次生产包，直接启动 Electron 跑 177 项端到端自检，失败时上传窗口日志。
 
@@ -267,6 +288,7 @@ scripts/
   candidates3.txt      同上，第二批
 spider-host/           JVM 宿主、Android 兼容层、dex2jar / unidbg 构建与运行脚本
 build/
+  icon-source.png      原始应用插画（重新生成图标的唯一输入）
   icon.png / icon.ico  应用图标（由 scripts/make-icon.mjs 生成）
 electron-builder.yml   打包配置（NSIS + zip，产物落 release/）
 ```
@@ -310,10 +332,11 @@ electron-builder.yml   打包配置（NSIS + zip，产物落 release/）
 
 | 值 | 含义 | 桌面端 |
 | --- | --- | --- |
-| `3` / `"cms"` | 苹果CMS（主力）；`api` 可写基地址，也可写带 `{ac}{wd}{pg}{t}{ids}` 占位符的模板 | ✅ 搜索 + 分类浏览 |
-| `1` / `"html"` | 网页规则站，靠 `rules` 里的 CSS 选择器抓取 | ✅ 仅搜索 |
-| `4` / `"api"` | CMS 变体 | ✅ 搜索 + 分类浏览 |
-| `0` / `"spider"` | 需要配套 jar/dex；有 `spider` 地址的 `csp_*` 站点由内置 JVM 宿主运行 | ✅ 默认关闭，在「影视源」页按需启用 |
+| 数字 `0/1` + HTTP API、无网页规则 | TVBox XML/JSON 采集接口，内部统一为 CMS | ✅ 首页、搜索、分类、详情与播放 |
+| `3` / `"cms"` / `"xml"` | CMS XML/JSON；API 可用 `{ac}{wd}{pg}{t}{ids}` 等模板槽位 | ✅ 首页、搜索、分类、详情与播放 |
+| `1` / `"html"` + `rules` | CSS 选择器网页规则站 | ✅ 搜索、规则详情与播放；不提供聚合分类 |
+| `4` / `"api"` | CMS 变体 | ✅ 首页、搜索、分类、详情与播放 |
+| `csp_*` API + 顶层 `spider` 或站点 `jar` | 由内置 JVM 宿主运行 jar/dex，优先按 API 实现识别 | ✅ 完整版按需启用；精简版不带运行时 |
 | `2` / 其它 | 未知类型 | ❌ 会灰显并说明原因 |
 
 站点级可选字段：`searchable`、`quickSearch`、`filterable`、`categories`、`header`、`timeout`、`enabled`。
@@ -349,7 +372,7 @@ pnpm selftest
 
 ## 电视直播
 
-直播源支持 m3u 与 txt 两套语法，同一频道的多个来源会合并成一张卡、一张卡上多个线路。当前内置源实测拿到 **14 个分组 541 个频道**（见 `shots/live.png`）。
+直播源支持 m3u 与 txt 两套语法，同一频道的多个来源会合并成一张卡、一张卡上多个线路。历史内置源抽测曾拿到 **14 个分组 541 个频道**（见 `shots/live.png`）。
 
 真正的问题不是源少，而是**死链多**：把候选公开源挨个量过一遍之后，现有那批地址里约 27% 拉不起来，约 32% 的频道一条能播的线路都没有。加源没用——`zbds-iptv4.m3u` 是现有 txt 的严格子集（542 条完全相同、独有 0 条），`fanmingming/live/index.m3u` 抽样 0% 可播，`iptv-org` 的 `cn.m3u` 抽样 23%，Gather.m3u 只有 13%。所以做法是**把已有的线路用起来**，而不是继续堆源：
 
@@ -581,12 +604,12 @@ data/
 ## 已知限制
 
 - 苹果CMS（type 3/4）与网页规则站（type 1）可直接运行；带 `spider` jar 的 `csp_*` 站点由内置 JVM 宿主运行，默认关闭、在「影视源」页按需启用。`.py` / `.js` Spider 与依赖 WebView 的站点仍会明确标注不支持。
-- Spider 当前已接入搜索、详情、播放与连通性测试，但首页内容位和聚合分类浏览仍只读取 CMS 站点；宿主虽然有 `home` / `category` 接口，还没有并入这两处全局视图。
+- Spider 已接入首页内容位、聚合分类、搜索、详情、播放与连通性测试；能否提供完整数据取决于各 jar 的实现，不能把宿主支持等同于站点全部可播放。
 - `DexNative` 加固类、会自递归调用 `Pan.init` 的 Spider，以及源站超时、TLS 或非 JSON 响应仍可能导致站点失败；这类失败是站点实现或源站边界，不会伪装成成功。
 - 解析接口只做 HTTP 解析（`type=1/2`）。`type=0` 的浏览器嗅探还没做。
 - 首页内容位只按「最近更新」或指定分类拉一页（每行最多 24 条），没有「换一批」；配置里也只能写 `site` / `typeId`，不支持写 `filters`。
 - 外部播放器检测是**扫路径 + 问注册表**，不是遍历全盘。装在 `D:\某处\` 这种自定义目录的播放器扫不到，得手填一次；手填之后它会一直出现在检测结果里。
-- 这台开发机上 `raw.githubusercontent.com` 不可达，从公开聚合配置里批量抽接口的路子走不通，只能用 `probe-apis.mjs` 逐个探活。
+- 真实源矩阵只记录运行当时的结果；源码推送、离线测试通过或旧截图都不能证明所有远程站点持续可用。
 
 ---
 

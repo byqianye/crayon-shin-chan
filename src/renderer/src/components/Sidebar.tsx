@@ -29,7 +29,7 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-brand">
-        <div className="sidebar-logo">蜡</div>
+        <img className="sidebar-logo" src="./icon.png" alt="" width={28} height={28} />
         <div className="sidebar-name">蜡笔小新</div>
       </div>
 

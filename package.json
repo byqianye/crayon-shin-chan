@@ -15,6 +15,8 @@
     "dev": "electron-vite dev",
     "dev:debug": "electron-vite dev -- --remote-debugging-port=9222",
     "selftest": "node scripts/selftest.mjs",
+    "icon:build": "node scripts/make-icon.mjs",
+    "icon:check": "node scripts/make-icon.mjs --check",
     "spider:deps": "powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/fetch-deps.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/fetch-unidbg.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/fetch-tools.ps1",
     "spider:build": "powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/build.ps1",
     "spider:unidbg": "powershell -NoProfile -ExecutionPolicy Bypass -File spider-host/build-unidbg.ps1",
