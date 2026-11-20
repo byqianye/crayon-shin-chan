@@ -6,7 +6,7 @@
  * 拖到超时。生产构建几秒钟就能起来，跑的还是同一份 renderer 代码。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { closeSync, openSync, readFileSync, existsSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -15,6 +15,7 @@ const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const logDir = process.env.RUNNER_TEMP || tmpdir()
 const outLog = join(logDir, 'dev.log')
 const errLog = join(logDir, 'dev.err.log')
+const dataDir = join(logDir, 'crayon-selftest-data')
 const CDP = 'http://127.0.0.1:9222'
 const READY_TIMEOUT_MS = 120_000
 
@@ -22,6 +23,13 @@ if (!existsSync(electron)) {
   console.error(`[ci-selftest] 找不到 Electron：${electron}`)
   process.exit(1)
 }
+
+try {
+  rmSync(dataDir, { recursive: true, force: true })
+} catch {
+  // 上一次异常退出留下的缓存，删不掉就让 Electron 自己覆盖
+}
+mkdirSync(dataDir, { recursive: true })
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -84,7 +92,12 @@ const child = spawn(
   ],
   {
     cwd: root,
-    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },
+    env: {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: '1',
+      CRAYON_DATA_DIR: dataDir,
+      CRAYON_DISABLE_BUNDLED_SOURCES: '1'
+    },
     stdio: ['ignore', outFd, errFd],
     windowsHide: true
   }
@@ -108,6 +121,12 @@ try {
   exitCode = 1
 } finally {
   killTree(child)
+  await sleep(500)
+  try {
+    rmSync(dataDir, { recursive: true, force: true })
+  } catch {
+    // 临时目录由 runner 回收
+  }
 
   if (exitCode !== 0) {
     console.error('\n--- dev.log ---\n' + tail(outLog))

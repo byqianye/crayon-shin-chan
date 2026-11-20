@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { IPC } from '@shared/ipc'
 import { detectSourceBuffer } from '@core/source/detect'
 import type { AiFrame, AiSummaryInput, AppInfo, FavoriteItem, HistoryItem, SearchOptions, SearchResponse } from '@shared/types'
@@ -66,7 +66,9 @@ import { flushStore } from './services/store'
 // ── 数据目录：跟着程序走，不写 C 盘用户目录 ────────────────────────────────
 // 开发时是项目根下的 data/；打包后是 exe 同级的 data/（免安装便携形态）。
 // 必须在 app ready 之前调用，否则 Chromium 已经把缓存写进默认的 userData 了。
-const DATA_DIR = join(app.isPackaged ? dirname(app.getPath('exe')) : app.getAppPath(), 'data')
+const DATA_DIR = process.env['CRAYON_DATA_DIR']
+  ? resolve(process.env['CRAYON_DATA_DIR'])
+  : join(app.isPackaged ? dirname(app.getPath('exe')) : app.getAppPath(), 'data')
 
 /** 把老版本留在默认 userData 里的 store 文件搬过来，避免升级后配置丢失 */
 function migrateLegacyData(legacy: string): void {
@@ -361,13 +363,16 @@ void app.whenReady().then(async () => {
 
   registerIpc()
   await hydrate()
+  const withBundledSources = process.env['CRAYON_DISABLE_BUNDLED_SOURCES'] !== '1'
   // 装完即用：一个配置源都没有时（全新安装）自动装好内置订阅并同步一次，
   // 用户打开就能搜、能看直播，不必先自己去找订阅地址。
-  await ensureBundledSources()
-  // 四个 TVBox 源先登记、不拉网络；窗口起来后再后台同步，避免首启被长超时拖住。
-  await ensureRemotePresetRecords()
+  if (withBundledSources) {
+    await ensureBundledSources()
+    // 四个 TVBox 源先登记、不拉网络；窗口起来后再后台同步，避免首启被长超时拖住。
+    await ensureRemotePresetRecords()
+  }
   await createWindow()
-  void syncRemotePresets()
+  if (withBundledSources) void syncRemotePresets()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()

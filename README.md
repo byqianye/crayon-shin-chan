@@ -147,7 +147,7 @@ node scripts/make-icon.mjs
 - 用 JDK 17 编译 Spider 宿主与 unidbg 桥，并断言 `out/`、`lib/`、`dex-tools/` 产物齐全；
 - 再构建一次生产包，直接启动 Electron 跑 177 项端到端自检，失败时上传窗口日志。
 
-自检不用 `dev:debug`：Windows runner 上 `electron-vite dev` 的首次冷启动实测能拖到十几分钟，生产构建几秒就能起来，跑的是同一份 renderer 代码。CI 自检入口是 `node scripts/ci-selftest.mjs`，本地也可以直接跑。
+自检不用 `dev:debug`：Windows runner 上 `electron-vite dev` 的首次冷启动实测能拖到十几分钟，生产构建几秒就能起来，跑的是同一份 renderer 代码。CI 自检入口是 `node scripts/ci-selftest.mjs`，本地也可以直接跑；它用临时 `CRAYON_DATA_DIR` 并关闭内置订阅，不会碰你本地的 `data\`。
 
 发布走 `.github/workflows/release.yml`：推 `v*` tag 后，它用与 CI 相同的 JDK 17 编译 Spider 运行时、构建生产包并跑端到端自检、打包、校验产物与 `latest.yml` 版本、生成 `SHA256SUMS.txt` 和发布说明，再创建一个 **draft Release**。draft 需要人工复查后手动发布，工作流不会把版本直接转成正式 Release。
 

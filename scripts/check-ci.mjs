@@ -30,6 +30,7 @@ check('CI 编译 unidbg 桥', /pnpm spider:unidbg/.test(ci))
 check('CI 构建生产包后运行端到端自检', /pnpm build/.test(ci) && /node scripts\/ci-selftest\.mjs/.test(ci))
 check('自检直接启动 Electron 而不是 dev server', /electron\.exe/.test(selftestRunner))
 check('自检等待窗口为 120 秒', /READY_TIMEOUT_MS = 120_000/.test(selftestRunner))
+check('自检使用隔离数据目录', /CRAYON_DATA_DIR/.test(selftestRunner) && /CRAYON_DISABLE_BUNDLED_SOURCES/.test(selftestRunner))
 check('发布工作流由 tag 或手动触发', /tags: \['v\*'\]/.test(release) && /workflow_dispatch:/.test(release))
 check('发布工作流生成精简 JRE', /pnpm spider:runtime/.test(release))
 check('发布前运行端到端自检', /node scripts\/ci-selftest\.mjs/.test(release))
@@ -46,4 +47,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 19 项工作流约束通过')
+console.log('[check-ci] 20 项工作流约束通过')

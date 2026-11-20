@@ -249,6 +249,8 @@ export async function syncRemotePresets(): Promise<void> {
  */
 export async function ensureBundledSources(): Promise<boolean> {
   if (SOURCE_PRESETS.length === 0) return false
+  // 端到端自检使用独立数据目录时不应再注入内置订阅，否则会与桩站点抢数据。
+  if (process.env['CRAYON_DISABLE_BUNDLED_SOURCES'] === '1') return false
   if (await readStore<boolean>(BUNDLED_FLAG, false)) return false
   const existing = await listSources()
   if (existing.length) {

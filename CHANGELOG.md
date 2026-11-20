@@ -10,7 +10,7 @@
 - 修复电视直播里「频道还没体检完就点开，地址出来了但播放器不挂载」的问题。
 - 工程：新增 GitHub Actions 的 Windows CI（类型检查、构建、宿主编译、177 项端到端自检）
   与 tag 触发的发布流水线；自检改为生产构建直接启动 Electron，发布前同样会跑一遍；
-  发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
+  自检使用临时数据目录，不影响本地配置；发布产物附 `SHA256SUMS.txt`，Release 先以 draft 形式生成。
 
 ## v0.1.2 — Spider 运行时随包发布
 
