@@ -32,8 +32,10 @@
 |---|---|
 | `CrayonShinChan-<版本>-x64.exe` | **安装版（推荐）**。双击一路下一步，会创建开始菜单与桌面快捷方式，可在「应用和功能」里卸载 |
 | `CrayonShinChan-<版本>-x64.zip` | **免安装版**。解压到任意目录，直接运行里面的 `蜡笔小新.exe` |
+| `CrayonShinChan-<版本>-x64-lite.exe` | **精简安装版**。不含 Spider 运行时，只支持 CMS / 网页规则 / JSON 接口，体积约小 90MB |
+| `CrayonShinChan-<版本>-x64-lite.zip` | **精简免安装版**。同上，解压即用 |
 
-当前源码对应 `0.1.3`。`release/` 里的本地产物名为 `CrayonShinChan-0.1.3-x64.exe` 和 `CrayonShinChan-0.1.3-x64.zip`。
+当前源码对应 `0.1.3`。完整版本地产物在 `release/`，精简版在 `release-lite/`。
 
 
 安装位置默认为 `%LOCALAPPDATA%\Programs\crayon-shin-chan`，主程序为 `蜡笔小新.exe`。安装向导里可以改，但**别装到 `C:\Program Files` 这类普通用户无法写入的目录**，否则 `data\` 可能退回系统用户目录。
@@ -515,6 +517,7 @@ node scripts/apply-sources.mjs samples/public-sources.json 庆余年   # 推进�
 | 开发 | `<项目根目录>\data\` |
 | 打包后 | `<exe 所在目录>\data\` |
 | 浏览器缓存 | `data\session\` |
+| Spider 工作目录 | `data\spider-work\` |
 
 ```
 data/

@@ -420,10 +420,10 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - 本地已验证：`actionlint` 对两个工作流报 0 问题；`pnpm@11.25.0` 在只读副本上
   `--frozen-lockfile` 通过；两个负向用例（版本 0.1.4、CHANGELOG 9.9.9）均以
   退出码 1 失败；typecheck、build、177/177 自检通过。
-- 2026-11-20 实跑收口：CI run 44673884511 三个 job 全绿；Release run 44677183907
-  全绿；`v0.1.3` tag 已推送，draft Release id 452286250 已生成，5 个资产齐全
-  （exe / blockmap / zip / latest.yml / SHA256SUMS.txt）。draft 尚未转正式，
-  正式发布前仍需用户确认。
+- 2026-11-20 实跑收口：CI run 44705758715 三个 job 全绿；Release run 44706599956
+  全绿；`v0.1.3` tag 已推送，draft Release 已生成，9 个资产齐全（完整版
+  exe / blockmap / zip，精简版 exe / blockmap / zip，latest.yml，
+  SHA256SUMS.txt / SHA256SUMS-lite.txt）。draft 尚未转正式，正式发布前仍需用户确认。
 
 ## 17. Spider 真实性矩阵（2026-11-20）
 
@@ -472,7 +472,8 @@ UI：源列表「审计」按钮；审计结果支持「一键停用失败源」
 - 新增 `electron-builder.lite.yml` 与 `build:win:lite`：精简版不打包
   `spider-host`（内置 JRE 44.4MB、unidbg 33.3MB、dex2jar 19.7MB、依赖 13.2MB），
   只保留 Electron/前端产物，适合 CMS/网页规则/JSON 接口用户。
-- 本机 0.1.3 实测：安装包 213MB → 120,229,061 字节；zip 262MB → 165,127,115 字节。
+- 0.1.3 Release 实测：完整版 exe 212,870,248 字节、精简版 118,968,462 字节；
+  完整 zip 261,977,971 字节、精简 zip 165,127,115 字节。
   完整版/精简版分别写 `SHA256SUMS.txt` / `SHA256SUMS-lite.txt`。
 - 发布工作流会同时构建两版并上传到同一个 draft Release；精简版明确标注
   “不含 Spider 运行时”，不承诺自动补装。后续若要“按需下载运行时”，需要
