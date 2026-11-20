@@ -42,9 +42,10 @@ check('自动发布只创建 draft', /--draft/.test(release))
 check('已有正式 Release 会拒绝覆盖', /已经是正式 Release，拒绝自动覆盖/.test(release))
 check('发布资产缺失时报错', /没有找到可上传的发布资产/.test(release) && /发布资产不完整/.test(release))
 check('packageManager 固定 pnpm 版本', packageJson.packageManager === 'pnpm@11.25.0')
+check('打包脚本禁止 electron-builder 隐式发布', /--publish never/.test(packageJson.scripts['build:win']))
 
 if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 20 项工作流约束通过')
+console.log('[check-ci] 21 项工作流约束通过')
