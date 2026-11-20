@@ -11,8 +11,10 @@
 | | |
 |---|---|
 | **技术栈** | Electron 44 + React 19 + TypeScript 7 + Vite 7 + zustand，ArtPlayer + hls.js |
+| **当前版本** | `0.1.3`，实际可下载版本以 Releases 页面的发布记录为准 |
 | **形态** | 便携——配置与缓存都在程序同级的 `data\`，不写 C 盘用户目录 |
-| **验证** | `npm run selftest` 端到端 **177 项断言**全绿；`npm run typecheck` / `npm run build` 干净 |
+| **Spider** | 内置按需启动的 JVM 宿主，可运行带 `spider` 文件的 `csp_*` jar/dex 站点 |
+| **验证** | `pnpm selftest` 端到端 **177 项断言**；`pnpm typecheck` / `pnpm build` |
 | **进度** | M1 → M4 全部完成，另有若干轮用户反馈驱动的修补 |
 
 - 设计文档（功能范围 / JSON 格式规范 / 里程碑）：见 [`功能框架.txt`](功能框架.txt)
@@ -24,17 +26,17 @@
 
 ## 下载安装
 
-去 **[Releases](https://github.com/hgtuj5688/tvbox-desktop/releases/latest)** 下载，两个文件选一个：
+去 **[Releases](https://github.com/byqianye/crayon-shin-chan/releases)** 下载。发布页提供对应版本的 Assets 时，两个文件选一个：
 
 | 文件 | 用途 |
 |---|---|
-| [`TVBox.Desktop-0.1.0-x64.exe`](https://github.com/hgtuj5688/tvbox-desktop/releases/download/v0.1.0/TVBox.Desktop-0.1.0-x64.exe) | **安装版（推荐）**。双击一路下一步，会建开始菜单与桌面快捷方式，可在「应用和功能」里卸载 |
-| [`TVBox.Desktop-0.1.0-x64.zip`](https://github.com/hgtuj5688/tvbox-desktop/releases/download/v0.1.0/TVBox.Desktop-0.1.0-x64.zip) | **免安装版**。解压到任意目录，直接跑里面的 `TVBox Desktop.exe` |
+| `CrayonShinChan-<版本>-x64.exe` | **安装版（推荐）**。双击一路下一步，会创建开始菜单与桌面快捷方式，可在「应用和功能」里卸载 |
+| `CrayonShinChan-<版本>-x64.zip` | **免安装版**。解压到任意目录，直接运行里面的 `蜡笔小新.exe` |
 
-> 仓库里的文件名带空格（`TVBox Desktop-0.1.0-x64.exe`），GitHub 上传时会把空格换成点，下载下来的是上面表格里那个名字，内容一样。
+当前源码对应 `0.1.3`。`release/` 里的本地产物名为 `CrayonShinChan-0.1.3-x64.exe` 和 `CrayonShinChan-0.1.3-x64.zip`。
 
 
-安装位置默认为 `%LOCALAPPDATA%\Programs\TVBox Desktop`；安装向导里可以改，但**别装到 `C:\Program Files` 这类需要管理员权限的目录**——那样 `data\` 写不进去，配置会退回系统用户目录。
+安装位置默认为 `%LOCALAPPDATA%\Programs\crayon-shin-chan`，主程序为 `蜡笔小新.exe`。安装向导里可以改，但**别装到 `C:\Program Files` 这类普通用户无法写入的目录**，否则 `data\` 可能退回系统用户目录。
 
 ### 装完就能用，不用自己找订阅
 
@@ -57,9 +59,48 @@
 ## 快速开始
 
 ```bash
-npm install          # 首次安装会自动补下载 Electron 二进制（走 npmmirror）
-npm run dev          # 启动开发窗口
+pnpm install          # 首次安装会自动补下载 Electron 二进制（走 npmmirror）
+pnpm dev              # 启动开发窗口
 ```
+
+项目同时保留 `package-lock.json` 与 `pnpm-lock.yaml`；用 `npm install` / `npm run dev` 也可以。
+
+## Spider 支持
+
+TVBox 的 `csp_*` 站点不再一律标灰：桌面端内置一个按需启动的 JVM 宿主，
+普通 `spider.jar` / `classes.dex` 会先下载并按来源地址缓存，首次使用时用 dex2jar 转换，
+之后搜索、详情、播放都直接走宿主。所有站点共用一个 JVM，空闲 5 分钟自动退出。
+0.1.2 起宿主运行时随安装包发布，不需要本机另装 Java。
+0.1.3 补齐了 `SharedPreferences`、`AtomicFile`、`Base64`、`Log`、
+`ContentResolver` 和 `Build` 等 Android 兼容 API，更多旧版 Spider 可以完成初始化。
+
+构建前需要 JDK 17（设置 `JAVA_HOME`）：
+
+```powershell
+pnpm spider:deps     # 下载 dex2jar 与宿主依赖
+pnpm spider:build    # 编译 spider-host/out
+pnpm spider:unidbg   # 编译 FishGuard 解包桥
+pnpm spider:runtime  # 生成精简 JRE（spider-host/runtime）
+pnpm build:win
+```
+
+Spider 站点首次接入时默认关闭，需要到「影视源」页按需打开；一个包含 40 个
+`csp_*` 站点的配置不会在第一次搜索时同时初始化 40 个站点。历史验证记录：
+「荐片」搜索热态 218–330ms，JVM RSS 约 65MB；摸鱼 FishCloud 站点走轻量
+兼容路径，首页 7 个分类 / 251 条、搜索 4 条，RSS 约 95MB。FishGuard 的
+加密 `ext` 由一次性 unidbg 桥解密后缓存，桥进程退出后不占常驻内存。
+具体站点和能力会随上游 jar 与源站变化，不能用这组数字承诺当前可用性。
+
+用真实 spider 跑宿主级冒烟测试：
+
+```powershell
+$env:SPIDER_JAR = "C:\path\to\spider.jar"
+$env:SPIDER_JAVA = "C:\path\to\java.exe"
+pnpm spider:smoke
+```
+
+当前边界：依赖 WebView 的 Spider、Python/JS Spider、`DexNative` 加固类和
+会自递归调用 `Pan.init` 的站点仍可能失败；失败原因会在影视源页或日志中明确显示。
 
 如果 Electron 二进制没下下来（国内直连 GitHub Releases 会失败），手动执行：
 
@@ -68,22 +109,27 @@ $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 node node_modules/electron/install.js
 ```
 
-## npm 脚本
+## 开发脚本
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run dev` | 启动开发窗口（渲染进程热更新） |
-| `npm run dev:debug` | 同上，另外打开 CDP 调试端口 9222 |
-| `npm run selftest` | 端到端自检：起本地桩服务器 + 驱动窗口，177 项断言 |
-| `npm run typecheck` | 主进程与渲染进程双工程类型检查 |
-| `npm run build` | 产出 `out/`（主进程 / preload / 渲染进程） |
-| `npm run build:win` | electron-builder 打包出 NSIS 安装包与免安装 zip |
+| `pnpm dev` | 启动开发窗口（渲染进程热更新） |
+| `pnpm dev:debug` | 同上，另外打开 CDP 调试端口 9222 |
+| `pnpm selftest` | 端到端自检：起本地桩服务器 + 驱动窗口，177 项断言 |
+| `pnpm spider:deps` | 下载 dex2jar 与 Spider 宿主依赖 |
+| `pnpm spider:build` | 编译 Spider 宿主（需要 JDK 17） |
+| `pnpm spider:unidbg` | 编译 FishGuard/Unidbg 解密桥（需要 JDK 17） |
+| `pnpm spider:runtime` | 生成精简 JRE（需要 JDK 17） |
+| `pnpm spider:smoke` | 用真实 spider 跑 search → detail → player 冒烟；需设置 `SPIDER_JAR` 与 `SPIDER_JAVA` |
+| `pnpm typecheck` | 主进程与渲染进程双工程类型检查 |
+| `pnpm build` | 产出 `out/`（主进程 / preload / 渲染进程） |
+| `pnpm build:win` | electron-builder 打包出 NSIS 安装包与免安装 zip |
 
 打包会先跑 `electron-vite build`，再由 electron-builder 把产物写到 `release/`：NSIS 安装包、免安装 zip、以及 `latest.yml`（增量更新元数据）。国内网络下要给 builder 自己的二进制也指个镜像，否则下载 nsis / 7zip 会卡住：
 
 ```powershell
 $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
-npm run build:win
+pnpm build:win
 ```
 
 应用图标是**代码生成**的，不依赖任何设计工具：改完配色或造型跑一次就会重新写出 `build/icon.png`（512×512）与多尺寸 `build/icon.ico`（16/24/32/48/64/128/256，直接内嵌 PNG）。electron-builder 会自动认 `build/` 下的这一对文件。
@@ -110,6 +156,7 @@ src/
       config.ts        配置 JSON 归一化（A 方言与 B 方言都能吃）
       sources.ts       配置源增删改查、同步、启动回填
       sites.ts         影视源汇总去重、本地覆盖、连通性测试
+      spider.ts        Spider jar/dex 缓存、dex2jar 转换、JVM 宿主 JSON-RPC
       settings.ts      应用设置
       presets.ts       内置推荐订阅（配置内容随程序走，不依赖仓库里的 samples/）
       search.ts        聚合搜索（并发池 + 流式进度 + 可取消）
@@ -144,6 +191,9 @@ scripts/
   ensure-electron.cjs  postinstall 时补下载 Electron
   make-icon.mjs        生成 build/icon.png 与多尺寸 icon.ico（零依赖，自己编 PNG）
   selftest.mjs         端到端自检
+  spider-smoke.mjs     直接验证 SpiderHost 的 home / search / detail / player
+  spider-service-smoke.mjs 验证主进程 spider.ts 的 search / detail / player / stop
+  spider-e2e.mjs       在 dev:debug 窗口中验证临时 Spider 源全链路
   stub-server.mjs      本地桩服务器（苹果CMS + 网页规则站 + 假 m3u8 + 占位海报）
   eval.mjs             往运行中的窗口丢一段 JS 执行
   shot.mjs             按 CDP 截图到 shots/
@@ -151,6 +201,7 @@ scripts/
   apply-sources.mjs    把一份本地配置推进运行中的窗口，并跑连通性 / 搜索 / 详情全链路
   candidates.txt       探活用的候选清单（每行「名字 地址」）
   candidates3.txt      同上，第二批
+spider-host/           JVM 宿主、Android 兼容层、dex2jar / unidbg 构建与运行脚本
 build/
   icon.png / icon.ico  应用图标（由 scripts/make-icon.mjs 生成）
 electron-builder.yml   打包配置（NSIS + zip，产物落 release/）
@@ -198,7 +249,7 @@ electron-builder.yml   打包配置（NSIS + zip，产物落 release/）
 | `3` / `"cms"` | 苹果CMS（主力）；`api` 可写基地址，也可写带 `{ac}{wd}{pg}{t}{ids}` 占位符的模板 | ✅ 搜索 + 分类浏览 |
 | `1` / `"html"` | 网页规则站，靠 `rules` 里的 CSS 选择器抓取 | ✅ 仅搜索 |
 | `4` / `"api"` | CMS 变体 | ✅ 搜索 + 分类浏览 |
-| `0` / `"spider"` | 需要配套 jar/dex，桌面端跑不了 | ❌ 会灰显并说明原因 |
+| `0` / `"spider"` | 需要配套 jar/dex；有 `spider` 地址的 `csp_*` 站点由内置 JVM 宿主运行 | ✅ 默认关闭，在「影视源」页按需启用 |
 | `2` / 其它 | 未知类型 | ❌ 会灰显并说明原因 |
 
 站点级可选字段：`searchable`、`quickSearch`、`filterable`、`categories`、`header`、`timeout`、`enabled`。
@@ -217,9 +268,9 @@ electron-builder.yml   打包配置（NSIS + zip，产物落 release/）
 
 ```bash
 # 终端 A
-npm run dev:debug
+pnpm dev:debug
 # 终端 B
-npm run selftest
+pnpm selftest
 ```
 
 自检会验证十三块共 177 项断言：六个路由渲染、配置解析、站点类型归一化、CMS 与网页规则站的连通性测试（含失败路径）、自定义请求头透传、界面渲染、搜索 → 详情 → 选集 → 播放器全链路（含同名合并、解说过滤、详情页选片源、播放页换片源与可点地址框）、分类浏览（大类 → 子分类归并、记录片/短剧/动画片的归位、伦理片整棵子树被丢掉、叶子 id 展开、滚到底接上下一页、翻页后开头几张卡的位置不变）、电视直播（m3u 与 txt 两种格式、跨源同名合并成多线路、内置自定义频道始终在、分组名去装饰符、房间号必须是纯数字、线路体检按地址记结果、能拉起来的标成可用、404 的标成不可用并写清原因、体检结果会落盘、整组都是死链的频道默认被藏起来、顶部给出「显示 N 个不可用」开关、点开后能看到被藏起来的频道并标成不可用、清空体检表）、收藏与观看历史（含同一部剧在两个源上合并成一条、行上给出可切换的源）、AI 剧情总结（区块位置、「点了才开始」文案、主动作是看片而不是纯文本推断、按有没有 Key 分支断言按钮状态与抽帧提示）、解析接口（配置里带的会出现在列表里、直链原样返回不白跑、分享页里的地址自己读得出来、兜底时会往下轮询而不是只问一条、只剩坏接口时如实报失败且坏接口确实被问过、失败过的沉到后面下次直接用成功过的、战绩分开记不互相污染、跑完不留自检用的接口）、首页内容位（走的是 `tvboxDesktop.home.sections` 这个命名空间、按 key 与按中文名都找得到源、指定分类就按分类拉、写错的源只让那一行报错）、外部播放器（检测返回的数组形状、不认的协议被挡在解析之前、设置页的检测按钮点了会出结果），以及页面无 JS 异常。
@@ -401,7 +452,7 @@ node scripts/probe-apis.mjs       # 重新探活候选采集接口（默认读 s
 node scripts/apply-sources.mjs samples/public-sources.json 庆余年   # 推进配置并跑全链路验证
 ```
 
-前四个需要 `npm run dev:debug` 已经在跑（走 CDP 端口 9222）。
+`eval.mjs`、`shot.mjs` 和 `apply-sources.mjs` 需要先运行 `pnpm dev:debug`（走 CDP 端口 9222）。
 
 ## 数据目录
 
@@ -409,7 +460,7 @@ node scripts/apply-sources.mjs samples/public-sources.json 庆余年   # 推进�
 
 | 场景 | 位置 |
 | --- | --- |
-| 开发 | `D:\tvbox\data\` |
+| 开发 | `<项目根目录>\data\` |
 | 打包后 | `<exe 所在目录>\data\` |
 | 浏览器缓存 | `data\session\` |
 
@@ -418,10 +469,11 @@ data/
   settings.json    应用设置
   sources.json     配置源
   sites.json       站点本地覆盖
+  spider-cache/    Spider 原始 jar/dex、转换后的 JVM jar 与 FishGuard ext 缓存
   session/         Chromium 缓存
 ```
 
-如果这个位置建不出来（比如装到了只读目录），会自动退回系统默认的 `%APPDATA%\tvbox-desktop\` 并在控制台提示。第一次切过来时会把旧目录里已有的 `settings/sources/sites.json` 拷过来，配置不会丢。
+如果这个位置建不出来（比如装到了只读目录），会自动退回系统默认的 `%APPDATA%\crayon-shin-chan\` 并在控制台提示。第一次切过来时会把旧目录里已有的 `settings/sources/sites.json` 拷过来，配置不会丢。
 
 ## 结果合并与换源
 
@@ -463,7 +515,9 @@ data/
 
 ## 已知限制
 
-- 只支持桌面端能跑的站点类型：苹果CMS（type 3/4）与网页规则站（type 1）。安卓那套需要 jar/dex 的 spider（type 0）跑不了，会灰显并写明原因。
+- 苹果CMS（type 3/4）与网页规则站（type 1）可直接运行；带 `spider` jar 的 `csp_*` 站点由内置 JVM 宿主运行，默认关闭、在「影视源」页按需启用。`.py` / `.js` Spider 与依赖 WebView 的站点仍会明确标注不支持。
+- Spider 当前已接入搜索、详情、播放与连通性测试，但首页内容位和聚合分类浏览仍只读取 CMS 站点；宿主虽然有 `home` / `category` 接口，还没有并入这两处全局视图。
+- `DexNative` 加固类、会自递归调用 `Pan.init` 的 Spider，以及源站超时、TLS 或非 JSON 响应仍可能导致站点失败；这类失败是站点实现或源站边界，不会伪装成成功。
 - 解析接口只做 HTTP 解析（`type=1/2`）。`type=0` 的浏览器嗅探还没做。
 - 首页内容位只按「最近更新」或指定分类拉一页（每行最多 24 条），没有「换一批」；配置里也只能写 `site` / `typeId`，不支持写 `filters`。
 - 外部播放器检测是**扫路径 + 问注册表**，不是遍历全盘。装在 `D:\某处\` 这种自定义目录的播放器扫不到，得手填一次；手填之后它会一直出现在检测结果里。
