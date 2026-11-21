@@ -10,7 +10,7 @@ const index = args.indexOf('--version')
 const version = index >= 0 ? args[index + 1]?.replace(/^v/, '') : ''
 
 if (!version) {
-  throw new Error('用法：node scripts/release-notes.mjs --version 0.1.5 [--write]')
+  throw new Error('用法：node scripts/release-notes.mjs --version 0.1.6 [--write]')
 }
 
 const changelog = await fs.readFile(join(root, 'CHANGELOG.md'), 'utf8')

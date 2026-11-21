@@ -59,6 +59,7 @@ const api = {
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.sourcesRemove, id),
     sync: (id: string): Promise<ConfigSource> => ipcRenderer.invoke(IPC.sourcesSync, id),
     syncAll: (): Promise<ConfigSource[]> => ipcRenderer.invoke(IPC.sourcesSyncAll),
+    syncRemotePresets: (): Promise<ConfigSource[]> => ipcRenderer.invoke(IPC.sourcesSyncRemotePresets),
     pickFile: (): Promise<string | null> => ipcRenderer.invoke(IPC.sourcesPickFile),
     presets: (): Promise<SourcePresetInfo[]> => ipcRenderer.invoke(IPC.sourcesPresets),
     addPreset: (id: string): Promise<ConfigSource> => ipcRenderer.invoke(IPC.sourcesAddPreset, id)

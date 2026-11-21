@@ -12,6 +12,7 @@ export const IPC = {
   sourcesRemove: 'sources:remove',
   sourcesSync: 'sources:sync',
   sourcesSyncAll: 'sources:sync-all',
+  sourcesSyncRemotePresets: 'sources:sync-remote-presets',
   sourcesPickFile: 'sources:pick-file',
   sourcesPresets: 'sources:presets',
   sourcesAddPreset: 'sources:add-preset',

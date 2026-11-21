@@ -204,7 +204,7 @@ export function normalizeSite(input: unknown, ctx: SiteNormalizeContext): Site |
   }
   // Spider 站点首次接入时默认关闭：一个配置里可能有几十个 csp_* 站点，
   // 全量并发会把首次搜索变成几十个 JVM 实例同时初始化。由用户在「影视源」
-  // 页按需打开，既可控也更省内存。
+  // 页确认后打开；配置里显式写入 enabled=true 的已有选择仍然保留。
   if (site.spiderClass && raw.enabled === undefined) site.enabled = false
   return site
 }

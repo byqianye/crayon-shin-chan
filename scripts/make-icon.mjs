@@ -28,7 +28,28 @@ try {
     throw new Error('build/icon-source.png 必须是至少 512×512 的正方形图片')
   }
 
-  const png = (size) => source.resize({ width: size, height: size, quality: 'best' }).toPNG()
+  // 沿插画已有的圆角内缘裁掉外层白框；保留画内原有的白色细节。
+  const bitmap = source.toBitmap()
+  const half = width / 2
+  const inset = width * 0.017
+  const radius = width * 0.24
+  const straight = half - inset - radius
+  for (let y = 0; y < height; y++) {
+    const dy = Math.abs(y + 0.5 - half) - straight
+    for (let x = 0; x < width; x++) {
+      const dx = Math.abs(x + 0.5 - half) - straight
+      const distance = Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0)
+      const coverage = Math.min(1, Math.max(0, radius - distance + 0.5))
+      if (coverage === 1) continue
+      const pixel = (y * width + x) * 4
+      // Electron 位图使用预乘透明度，颜色和 alpha 必须一起缩放。
+      for (let channel = 0; channel < 4; channel++) {
+        bitmap[pixel + channel] = Math.round(bitmap[pixel + channel] * coverage)
+      }
+    }
+  }
+  const rounded = nativeImage.createFromBitmap(bitmap, { width, height })
+  const png = (size) => rounded.resize({ width: size, height: size, quality: 'best' }).toPNG()
   const sizes = [16, 24, 32, 48, 64, 128, 256]
   const blobs = sizes.map(png)
   const header = Buffer.alloc(6)
@@ -55,7 +76,7 @@ try {
   for (const [name, bytes] of outputs) {
     const path = join(root, name)
     if (check) {
-      if (!readFileSync(path).equals(bytes)) throw new Error(name + ' 与原图不一致，请运行 pnpm icon:build')
+      if (!readFileSync(path).equals(bytes)) throw new Error(name + ' 与生成结果不一致，请运行 pnpm icon:build')
     } else {
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, bytes)

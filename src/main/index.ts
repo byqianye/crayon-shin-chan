@@ -229,6 +229,15 @@ function registerIpc(): void {
     clearHomeCache()
     return result
   })
+  ipcMain.handle(IPC.sourcesSyncRemotePresets, async () => {
+    const results = await syncRemotePresets()
+    if (results.some((source) => !source.error)) {
+      clearLiveCache()
+      clearCategoryCache()
+      clearHomeCache()
+    }
+    return results
+  })
   ipcMain.handle(IPC.sourcesPickFile, async (): Promise<string | null> => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -418,7 +427,6 @@ void app.whenReady().then(async () => {
     await ensureRemotePresetRecords()
   }
   await createWindow()
-  if (withBundledSources) void syncRemotePresets()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow()

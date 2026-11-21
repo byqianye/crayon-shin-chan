@@ -11,6 +11,7 @@ const NAME = 'sources'
 
 /** 已解析配置的内存缓存：sourceId -> ParsedConfig */
 const parsedCache = new Map<string, ParsedConfig>()
+const syncRequests = new Map<string, Promise<ConfigSource>>()
 let hydrated = false
 
 export async function listSources(): Promise<ConfigSource[]> {
@@ -29,7 +30,7 @@ export async function hydrate(): Promise<void> {
   const list = await listSources()
   let changed = false
   for (const source of list) {
-    if (!source.enabled || !source.raw) continue
+    if (!source.raw) continue
     try {
       const parsed = parseConfig(source.raw, {
         sourceId: source.id,
@@ -112,14 +113,22 @@ export async function updateSource(
   const idx = list.findIndex((s) => s.id === id)
   if (idx < 0) throw new Error('配置源不存在')
   const next: ConfigSource = { ...list[idx], ...patch }
-  if (patch.url) {
-    next.url = normalizeSourceUrl(patch.url)
+  next.url = patch.url ? normalizeSourceUrl(patch.url) : list[idx].url
+  if (next.url !== list[idx].url) {
     next.kind = /^https?:\/\//i.test(next.url) ? 'url' : 'file'
     next.repos = undefined
+    next.raw = undefined
+    next.lastSync = 0
+    next.siteCount = 0
+    next.usableSiteCount = 0
+    next.liveCount = 0
+    next.parseCount = 0
+    next.error = undefined
+    next.notice = undefined
+    parsedCache.delete(id)
   }
   list[idx] = next
   await saveSources(list)
-  if (patch.enabled === false) parsedCache.delete(id)
   return next
 }
 
@@ -131,24 +140,32 @@ export async function removeSource(id: string): Promise<void> {
   parsedCache.delete(id)
 }
 
-export async function syncSource(id: string): Promise<ConfigSource> {
-  const list = await listSources()
-  const idx = list.findIndex((s) => s.id === id)
-  if (idx < 0) throw new Error('配置源不存在')
-  const source = list[idx]
+export function syncSource(id: string): Promise<ConfigSource> {
+  const existing = syncRequests.get(id)
+  if (existing) return existing
+  const pending = fetchSource(id).finally(() => syncRequests.delete(id))
+  syncRequests.set(id, pending)
+  return pending
+}
+
+async function fetchSource(id: string): Promise<ConfigSource> {
+  const source = (await listSources()).find((s) => s.id === id)
+  if (!source) throw new Error('配置源不存在')
+  const { url, name, kind } = source
   const settings = await getSettings()
 
-  const next: ConfigSource = { ...source }
+  const update: Partial<ConfigSource> = {}
+  let fetched: ParsedConfig | undefined
   try {
     const parsed = await loadConfigSource(source, settings.timeout)
-    const refs = extractMultiRepo(parsed.raw).map((ref) => ({ ...ref, url: resolveSourceAddress(ref.url, source.url) }))
+    const refs = extractMultiRepo(parsed.raw).map((ref) => ({ ...ref, url: resolveSourceAddress(ref.url, url) }))
     if (refs.length && !parsed.sites.length) {
       // 多仓清单：逐个拉取子仓库，合并成一份可直接 hydrate 的配置
       const multi = await loadMultiRepo(source, refs, settings.timeout)
-      parsedCache.set(source.id, multi.parsed)
-      next.kind = 'multirepo'
-      next.repos = multi.repos
-      next.raw = {
+      fetched = multi.parsed
+      update.kind = 'multirepo'
+      update.repos = multi.repos
+      update.raw = {
         name: multi.parsed.name,
         sites: multi.parsed.sites,
         parses: multi.parsed.parses,
@@ -157,30 +174,40 @@ export async function syncSource(id: string): Promise<ConfigSource> {
         flags: multi.parsed.flags,
         home: multi.parsed.home
       }
-      next.siteCount = multi.parsed.sites.length
-      next.usableSiteCount = multi.parsed.sites.filter((s) => !s.unsupported).length
-      next.liveCount = multi.parsed.lives.length
-      next.parseCount = multi.parsed.parses.length
     } else {
-      parsedCache.set(source.id, parsed)
-      next.kind = source.kind === 'file' ? 'file' : 'url'
-      next.repos = undefined
-      next.raw = parsed.raw
-      next.siteCount = parsed.sites.length
-      next.usableSiteCount = parsed.sites.filter((s) => !s.unsupported).length
-      next.liveCount = parsed.lives.length
-      next.parseCount = parsed.parses.length
+      fetched = parsed
+      update.kind = kind === 'file' ? 'file' : 'url'
+      update.repos = undefined
+      update.raw = parsed.raw
     }
-    next.lastSync = Date.now()
-    next.error = undefined
-    next.name = source.name || parsed.name
-    next.notice = parsed.notice
+    update.siteCount = fetched.sites.length
+    update.usableSiteCount = fetched.sites.filter((s) => !s.unsupported).length
+    update.liveCount = fetched.lives.length
+    update.parseCount = fetched.parses.length
+    update.lastSync = Date.now()
+    update.error = undefined
+    update.notice = parsed.notice
   } catch (err) {
-    next.error = (err as Error).message
     // 同步失败但本地有缓存时保留可用数据，界面只提示不中断
+    update.error = (err as Error).message
   }
-  list[idx] = next
-  await saveSources(list)
+  // 拉取期间用户可以修改或删除源：只把同步结果合入当前记录。
+  const current = await listSources()
+  const idx = current.findIndex((s) => s.id === id)
+  if (idx < 0) throw new Error('配置源不存在')
+  const latest = current[idx]
+  if (latest.url !== url) throw new Error('配置源地址已修改，请重新同步')
+  const next = { ...latest, ...update }
+  if (fetched) {
+    if (latest.name !== name) {
+      for (const site of fetched.sites) {
+        if (site.sourceName === name) site.sourceName = latest.name
+      }
+    }
+    parsedCache.set(id, fetched)
+  }
+  current[idx] = next
+  await saveSources(current)
   return next
 }
 

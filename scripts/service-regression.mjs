@@ -12,6 +12,7 @@ const root = projectRoot()
 const temp = await mkdtemp(join(tmpdir(), 'crayon-service-regression-'))
 const requests = []
 let slowClosed = false
+let presetUnavailable = false
 const video = { vod_id: '1', vod_name: '适配测试片', vod_pic: '/poster.jpg', vod_content: '简介',
   vod_play_from: 'm3u8', vod_play_url: '第1集$https://example.com/1.m3u8' }
 const xml = '<?xml version="1.0"?><rss><list page="1" pagecount="3"><video><id>1</id><name><![CDATA[适配测试片]]></name><pic>/poster.jpg</pic><type>动作片</type><des>简介</des><dl><dd flag="m3u8"><![CDATA[第1集$https://example.com/1.m3u8]]></dd></dl></video></list><class><ty id="6">动作片</ty></class></rss>'
@@ -21,6 +22,14 @@ const server = createServer((req, res) => {
   let timer
   res.once('close', () => { clearTimeout(timer); if (url.searchParams.get('wd') === 'slow') slowClosed = true })
   timer = setTimeout(() => {
+    if (url.pathname === '/preset.json') {
+      if (presetUnavailable) { res.writeHead(503); res.end(); return }
+      res.end(JSON.stringify({ spider: '/spider.jar', sites: [
+        { key: 'preset-cms', name: 'Preset CMS', type: 1, api: '/json' },
+        { key: 'preset-spider', name: 'Preset Spider', type: 3, api: 'csp_Test' }
+      ] }))
+      return
+    }
     if (url.pathname === '/repo/child.json') {
       res.end(JSON.stringify({ sites: [{ key: 'child', name: 'child', type: 1, api: '../json' }],
         headers: [{ host: 'fixture.test', header: { 'X-Fixture': '1' } }], flags: ['line'],
@@ -70,6 +79,114 @@ try {
     for (const preset of svc.presets.SOURCE_PRESETS) {
       assert.equal(preset.siteCount, preset.config.sites.length)
       assert.equal(preset.liveCount, preset.config.lives.length)
+    }
+  })
+  await check('Startup refreshes cached presets, keeps cache on failure and skips disabled sources', async () => {
+    const preset = svc.presets.REMOTE_PRESETS[0]
+    const original = preset.url
+    preset.url = base + '/preset.json'
+    const source = await svc.presets.addPreset(preset.id)
+    try {
+      await svc.presets.syncRemotePresets()
+      assert.equal((await svc.sites.getSite('preset-cms')).enabled, true)
+      assert.equal((await svc.sites.getSite('preset-spider')).enabled, false)
+      await svc.sites.setSitesEnabled(['preset-spider'], true)
+      assert.equal((await svc.sites.getSite('preset-spider')).enabled, true)
+      await svc.sites.setSitesEnabled(['preset-cms'], false)
+      presetUnavailable = true
+      const [failed] = await svc.presets.syncRemotePresets()
+      assert.match(failed.error, /503/)
+      assert(failed.lastSync > 0)
+      assert.equal((await svc.sites.getSite('preset-cms')).enabled, false)
+      assert.equal((await svc.sites.getSite('preset-spider')).enabled, true)
+      presetUnavailable = false
+      const [recovered] = await svc.presets.syncRemotePresets()
+      assert.equal(recovered.error, undefined)
+      await svc.sources.updateSource(source.id, { enabled: false })
+      const before = requests.length
+      assert.deepEqual(await svc.presets.syncRemotePresets(), [])
+      assert.equal(requests.length, before)
+      await svc.sources.updateSource(source.id, { enabled: true })
+      assert.equal((await svc.sites.getSite('preset-spider')).enabled, true)
+    } finally {
+      presetUnavailable = false
+      preset.url = original
+      await svc.sources.removeSource(source.id)
+    }
+  })
+  await check('In-flight refresh does not undo disabling, removing or adding a source', async () => {
+    const source = await svc.sources.addSource({ url: base + '/preset.json' })
+    let other
+    try {
+      const before = requests.length
+      const pending = svc.sources.syncSource(source.id)
+      assert.equal(svc.sources.syncSource(source.id), pending)
+      const deadline = Date.now() + 1500
+      while (requests.length === before && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 1))
+      assert.equal(requests.length, before + 1)
+      other = await svc.sources.addSource({ url: base + '/other.json' })
+      await svc.sources.updateSource(source.id, { name: 'renamed', enabled: false })
+      await pending
+      const saved = await svc.sources.listSources()
+      assert(saved.some((s) => s.id === other.id))
+      assert.equal(saved.find((s) => s.id === source.id).enabled, false)
+      assert.equal(saved.find((s) => s.id === source.id).name, 'renamed')
+      const next = svc.sources.syncSource(source.id)
+      await svc.sources.removeSource(source.id)
+      await assert.rejects(next, /配置源不存在/)
+      assert(!(await svc.sources.listSources()).some((s) => s.id === source.id))
+    } finally {
+      await svc.sources.removeSource(source.id)
+      if (other) await svc.sources.removeSource(other.id)
+    }
+  })
+  await check('Renderer shows cached sites before preset sync and refreshes them in the same window', async () => {
+    const store = svc.renderer.useApp
+    const initial = store.getInitialState()
+    const cached = { id: 'cached', name: 'Cached', enabled: true, lastSync: 1 }
+    const fresh = { ...cached, lastSync: 2, siteCount: 2 }
+    let sources = [cached]
+    let sites = [site]
+    let syncCalls = 0
+    let finishSync
+    let finishHome
+    const firstSync = new Promise((resolve) => { finishSync = resolve })
+    const firstHome = new Promise((resolve) => { finishHome = resolve })
+    globalThis.document = { documentElement: { dataset: {} } }
+    globalThis.window = { api: {
+      info: async () => ({}), settings: { get: async () => ({ density: 'compact' }) },
+      sources: { list: async () => sources, presets: async () => [{ remote: true }],
+        syncRemotePresets: () => { syncCalls++; return firstSync } },
+      sites: { list: async () => sites },
+      library: { get: async () => ({ favorites: [], history: [] }) },
+      home: { sections: () => firstHome }
+    } }
+    try {
+      const init = store.getState().init()
+      await store.getState().init()
+      assert.equal(store.getState().ready, true)
+      assert.equal(store.getState().refreshingPresets, true)
+      assert.deepEqual(store.getState().sites, [site])
+      const home = store.getState().loadHome()
+      sources = [fresh]
+      sites = [site, xmlSite]
+      finishSync(sources)
+      await init
+      assert.equal(syncCalls, 1)
+      assert.equal(store.getState().refreshingPresets, false)
+      assert.deepEqual(store.getState().sites, sites)
+      assert.deepEqual(store.getState().sources, sources)
+      finishHome([{ title: 'outdated' }])
+      await home
+      assert.deepEqual(store.getState().home, [])
+      assert.equal(store.getState().homeLoaded, false)
+      assert.equal(store.getState().homeLoading, false)
+    } finally {
+      finishSync([])
+      finishHome([])
+      store.setState(initial, true)
+      delete globalThis.document
+      delete globalThis.window
     }
   })
   await check('Renderer details coalesce, expire, stay bounded and reject stale cache writes', async () => {

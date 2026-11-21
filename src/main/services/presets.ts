@@ -132,7 +132,7 @@ export const REMOTE_PRESETS: RemotePreset[] = [
   {
     id: 'fm-config',
     name: '肥猫接口',
-    desc: '加密 TVBox 配置（自动解密）。点播依赖 jar Spider，可在「影视源」页启用后运行。',
+    desc: '启动后自动同步和解密。普通站点按配置启用，第三方 Spider 可在「影视源」页确认后批量启用。',
     url: 'http://肥猫.net'
   }
 ]
@@ -201,20 +201,23 @@ export async function ensureRemotePresetRecords(): Promise<void> {
   await writeStore(REMOTE_BUNDLED_FLAG, true)
 }
 
-/** 窗口起来后后台同步内置 TVBox 源；失败只记日志，不影响启动 */
-export async function syncRemotePresets(): Promise<void> {
+/** 窗口起来后后台同步启用的内置 TVBox 源，不影响首屏读取上次缓存。 */
+export async function syncRemotePresets(): Promise<ConfigSource[]> {
+  if (process.env['CRAYON_DISABLE_BUNDLED_SOURCES'] === '1') return []
   const sources = await listSources()
+  const results: ConfigSource[] = []
   for (const preset of REMOTE_PRESETS) {
     const source = sources.find(
       (item) => normalizeSourceUrl(item.url) === normalizeSourceUrl(preset.url)
     )
-    if (!source || source.lastSync) continue
+    if (!source?.enabled) continue
     try {
-      await syncSource(source.id)
+      results.push(await syncSource(source.id))
     } catch (err) {
       console.warn(`[presets] 预置源 ${preset.name} 后台同步失败：`, err)
     }
   }
+  return results
 }
 
 /**

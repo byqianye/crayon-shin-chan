@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type {
   AuditResult,
   Site,
@@ -91,7 +92,10 @@ export function Sites(): JSX.Element {
 
   const [kw, setKw] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | SiteType>('all')
-  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [params, setParams] = useSearchParams()
+  const sourceId = params.get('source')
+  const sourceName = params.get('sourceName')
+  const scopedSource = useApp((s) => s.sources.find((source) => source.id === sourceId))
   const [onlyEnabled, setOnlyEnabled] = useState(false)
   const [testing, setTesting] = useState<Record<string, boolean>>({})
   const [testResults, setTestResults] = useState<
@@ -128,7 +132,8 @@ export function Sites(): JSX.Element {
     const k = kw.trim().toLowerCase()
     return sites.filter((s) => {
       if (typeFilter !== 'all' && s.type !== typeFilter) return false
-      if (sourceFilter !== 'all' && s.sourceName !== sourceFilter) return false
+      if (sourceId && s.sourceId !== sourceId) return false
+      if (sourceName && s.sourceName !== sourceName) return false
       if (onlyEnabled && !s.enabled) return false
       if (!k) return true
       return (
@@ -137,7 +142,7 @@ export function Sites(): JSX.Element {
         s.api.toLowerCase().includes(k)
       )
     })
-  }, [sites, kw, typeFilter, sourceFilter, onlyEnabled])
+  }, [sites, kw, typeFilter, sourceId, sourceName, onlyEnabled])
 
   useEffect(() => {
     void window.api.health
@@ -353,7 +358,7 @@ export function Sites(): JSX.Element {
   )
 
   async function enableVisibleSpider(): Promise<void> {
-    if (!disabledSpider.length) return
+    if (!disabledSpider.length || !spiderStatus?.available) return
     if (
       !window.confirm(
         `将启用当前列表中的 ${disabledSpider.length} 个 Spider 站点。\n` +
@@ -367,7 +372,6 @@ export function Sites(): JSX.Element {
       disabledSpider.map((s) => s.key),
       true
     )
-    await refreshSites()
     notify(`已启用 ${disabledSpider.length} 个 Spider 站点`, 'success')
   }
 
@@ -506,10 +510,10 @@ export function Sites(): JSX.Element {
             type="button"
             className="btn btn-sm"
             onClick={() => void enableVisibleSpider()}
-            disabled={!disabledSpider.length}
+            disabled={!disabledSpider.length || !spiderStatus?.available}
             title="只启用当前筛选结果中尚未启用的 Spider 站点"
           >
-            启用可见 Spider
+            启用可见 Spider{disabledSpider.length ? `（${disabledSpider.length}）` : ''}
           </button>
         </div>
       </div>
@@ -619,17 +623,28 @@ export function Sites(): JSX.Element {
 
         <div className="grow" />
 
-        {sourceNames.length > 1 ? (
+        {sourceNames.length > 1 || sourceId || sourceName ? (
           <select
             className="input"
             style={{ width: 170 }}
-            value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
+            value={sourceId ? 'scoped' : sourceName ? 'name:' + sourceName : 'all'}
+            onChange={(e) => {
+              const value = e.target.value
+              if (value !== 'scoped') {
+                setParams(value === 'all' ? {} : { sourceName: value.slice(5) }, { replace: true })
+              }
+            }}
           >
             <option value="all">全部来源</option>
-            {sourceNames.map((n) => (
-              <option key={n} value={n}>
-                {n}
+            {sourceId ? (
+              <option value="scoped">{scopedSource?.name ?? '所选来源（暂无站点）'}</option>
+            ) : null}
+            {sourceName && !sourceNames.includes(sourceName) ? (
+              <option value={'name:' + sourceName}>{sourceName}（暂无站点）</option>
+            ) : null}
+            {sourceNames.filter((name) => !sourceId || name !== scopedSource?.name).map((name) => (
+              <option key={name} value={'name:' + name}>
+                {name}
               </option>
             ))}
           </select>

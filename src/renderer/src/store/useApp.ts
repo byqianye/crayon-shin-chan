@@ -242,6 +242,7 @@ interface AppState {
   sites: Site[]
   /** 正在同步中的配置源 id */
   syncing: Record<string, boolean>
+  refreshingPresets: boolean
   toasts: Toast[]
   /** 内置推荐订阅（首启页与设置页展示，点一下才添加） */
   presets: SourcePresetInfo[]
@@ -310,6 +311,7 @@ export const useApp = create<AppState>((set, get) => ({
   sources: [],
   sites: [],
   syncing: {},
+  refreshingPresets: false,
   toasts: [],
   presets: [],
 
@@ -331,6 +333,7 @@ export const useApp = create<AppState>((set, get) => ({
   homeLoaded: false,
 
   async init() {
+    if (get().ready) return
     const [info, settings, sources, sites, presets, library] = await Promise.all([
       window.api.info(),
       window.api.settings.get(),
@@ -339,6 +342,7 @@ export const useApp = create<AppState>((set, get) => ({
       window.api.sources.presets(),
       window.api.library.get()
     ])
+    if (get().ready) return
     set({
       info,
       settings,
@@ -350,6 +354,17 @@ export const useApp = create<AppState>((set, get) => ({
       ready: true
     })
     applyTheme(settings)
+    if (!sources.some((source) => source.enabled) || !presets.some((preset) => preset.remote)) return
+    set({ refreshingPresets: true })
+    try {
+      const results = await window.api.sources.syncRemotePresets()
+      if (results.some((source) => !source.error)) await get().refreshAll()
+      else if (results.length) await get().refreshSources()
+    } catch (err) {
+      get().notify(`内置订阅更新失败：${(err as Error).message}`, 'warn')
+    } finally {
+      set({ refreshingPresets: false })
+    }
   },
 
   async refreshSources() {
@@ -714,14 +729,19 @@ export const useApp = create<AppState>((set, get) => ({
 
   async loadHome(force = false) {
     if (get().homeLoading) return
+    const generation = catalogGeneration
     set({ homeLoading: true })
     try {
       const home = await window.api.home.sections(force)
+      if (generation !== catalogGeneration) return
       set({ home, homeLoading: false, homeLoaded: true })
       if (force) get().notify(`内容位已刷新（${home.length} 行）`, 'success')
     } catch (err) {
+      if (generation !== catalogGeneration) return
       set({ homeLoading: false, homeLoaded: true })
       get().notify(`首页内容位拉取失败：${(err as Error).message}`, 'danger')
+    } finally {
+      if (generation !== catalogGeneration) set({ homeLoading: false })
     }
   },
 

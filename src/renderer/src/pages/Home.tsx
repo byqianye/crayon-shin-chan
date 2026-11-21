@@ -17,6 +17,7 @@ export function Home(): JSX.Element {
   const loadHome = useApp((s) => s.loadHome)
   const syncAll = useApp((s) => s.syncAll)
   const syncing = useApp((s) => s.syncing)
+  const refreshingPresets = useApp((s) => s.refreshingPresets)
 
   // 内容位要等站点列表就绪，所以不放进 init() 跟首屏一起等：
   // 先把统计和「继续观看」画出来，内容位在后台拉，回来了再补上。
@@ -42,10 +43,7 @@ export function Home(): JSX.Element {
       <div className="hero">
         <h1 className="hero-title">蜡笔小新</h1>
         <p className="hero-sub">
-          纯白极简的 Windows 影视聚合客户端 · 配置订阅 · 分类浏览 · 多线路选集播放 · 电视直播。
-          当前 <b>M1 到 M4 都已完成</b>：配置源与影视源管理、聚合搜索与分类浏览、详情选集、
-          内嵌播放器与一键转外部播放器（会自动检测本机装了哪个）、m3u/txt 直播、收藏与观看历史、
-          网页线路自动换出真播放地址，以及下面这几行「最近更新」内容位都能用了。
+          在顶部搜索框查找影片，或从下方继续观看。内置订阅会在启动后自动更新。
         </p>
         <div className="hero-actions">
           <NavLink to="/settings" className="btn btn-primary">
@@ -62,6 +60,12 @@ export function Home(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {refreshingPresets ? (
+        <div className="banner banner-info" role="status">
+          <span className="spin" /> 正在更新内置订阅，已有站点可以继续使用。
+        </div>
+      ) : null}
 
       <div className="stat-grid">
         <div className="stat">
@@ -208,26 +212,39 @@ export function Home(): JSX.Element {
         </div>
         <div className="panel">
           <div className="list">
-            {sources.map((source) => (
-              <div className="list-row" key={source.id}>
-                <span className={`dot ${source.error ? 'bad' : source.lastSync ? 'ok' : ''}`} />
-                <div className="list-row-main">
-                  <div className="list-row-title">{source.name}</div>
-                  <div className="list-row-sub">
-                    {source.kind === 'url' ? source.url : `本地文件 · ${source.url}`}
+            {sources.map((source) => {
+              const needsEnable = sites.some(
+                (site) => site.sourceId === source.id && site.spiderClass && !site.unsupported && !site.enabled
+              )
+              return (
+                <div className="list-row" key={source.id}>
+                  <span className={`dot ${source.error ? 'bad' : source.lastSync ? 'ok' : ''}`} />
+                  <div className="list-row-main">
+                    <div className="list-row-title">{source.name}</div>
+                    <div className="list-row-sub">
+                      {source.kind === 'file' ? `本地文件 · ${source.url}` : source.url}
+                    </div>
                   </div>
+                  {source.error ? (
+                    <span className="tag tag-danger" title={source.error}>
+                      {source.lastSync ? '更新失败 · 使用上次缓存' : '同步失败'}
+                    </span>
+                  ) : null}
+                  <span className="tag tag-outline">{source.siteCount} 站</span>
+                  <span className="tag tag-outline">{source.liveCount} 直播</span>
+                  <span className="tag tag-outline">{source.parseCount} 解析</span>
+                  <span className="fs-12 text-3 nowrap">{relativeTime(source.lastSync)}</span>
+                  {needsEnable ? (
+                    <NavLink
+                      to={{ pathname: '/sites', search: new URLSearchParams({ source: source.id }).toString() }}
+                      className="btn btn-sm"
+                    >
+                      查看并启用 Spider
+                    </NavLink>
+                  ) : null}
                 </div>
-                {source.error ? (
-                  <span className="tag tag-danger" title={source.error}>
-                    同步失败
-                  </span>
-                ) : null}
-                <span className="tag tag-outline">{source.siteCount} 站</span>
-                <span className="tag tag-outline">{source.liveCount} 直播</span>
-                <span className="tag tag-outline">{source.parseCount} 解析</span>
-                <span className="fs-12 text-3 nowrap">{relativeTime(source.lastSync)}</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>
