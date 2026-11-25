@@ -8,6 +8,7 @@ import { Icon } from '@/components/icons'
 import { detailKey, findSourceGroup, useApp } from '@/store/useApp'
 import { createArt } from '@/utils/artplayer'
 import { isDirectMedia, isHls, pickPlayableLine } from '@/utils/media'
+import { trackPlaybackHistory } from '@/utils/playbackHistory'
 
 export function Player(): JSX.Element {
   const params = useParams()
@@ -89,29 +90,8 @@ export function Player(): JSX.Element {
 
     let alive = true
     let art: Artplayer | null = null
-    let lastSaved = 0
+    let stopTracking: (() => void) | undefined
     const raw = episode.url
-
-    // 观看记录：进播放页就先记一条（position 0），之后由 timeupdate 定时刷新进度。
-    // 用 5 秒节流，否则 timeupdate 每 250ms 触发一次会把 store 和磁盘写爆。
-    const save = (force = false): void => {
-      if (!art) return
-      const now = Date.now()
-      if (!force && now - lastSaved < 5000) return
-      lastSaved = now
-      void recordHistory({
-        siteKey,
-        siteName: site?.name ?? siteKey,
-        vodId,
-        name: detail?.vod_name ?? siteKey,
-        pic: detail?.vod_pic,
-        lineIndex,
-        epIndex,
-        epName: episode.name,
-        position: Math.floor(art.currentTime || 0),
-        duration: Number.isFinite(art.duration) ? Math.floor(art.duration) : 0
-      })
-    }
 
     const mount = (url: string): void => {
       art = createArt(el, { url, referer, accent: settings?.accent })
@@ -119,10 +99,26 @@ export function Player(): JSX.Element {
       art.on('video:error', () => {
         setError('视频加载失败，可能是地址已失效、需要 Referer，或者需要解析接口。')
       })
-      save(true)
-      art.on('video:timeupdate', () => save())
-      art.on('video:pause', () => save(true))
-      art.on('video:ended', () => save(true))
+      const previous = useApp.getState().history
+        .flatMap((g) => g.items)
+        .find((h) => h.siteKey === siteKey && h.vodId === vodId)
+      stopTracking = trackPlaybackHistory(
+        art,
+        {
+          siteKey,
+          siteName: site?.name ?? siteKey,
+          vodId,
+          name: detail?.vod_name ?? siteKey,
+          pic: detail?.vod_pic,
+          lineIndex,
+          epIndex,
+          epName: episode.name
+        },
+        previous,
+        (entry) => recordHistory(entry).catch((err: Error) => {
+          notify(`观看进度保存失败：${err.message}`, 'danger')
+        })
+      )
     }
 
     const boot = async (): Promise<void> => {
@@ -151,12 +147,13 @@ export function Player(): JSX.Element {
 
     return () => {
       alive = false
+      stopTracking?.()
       artRef.current = null
       art?.destroy(false)
     }
     // 不依赖整个 detail 对象，缓存更新时仍应保留正在播放的实例。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [episode?.url, referer, settings?.accent, siteKey, line?.name])
+  }, [episode?.url, referer, settings?.accent, siteKey, vodId, lineIndex, epIndex, line?.name, recordHistory, notify])
 
   /** Spider 剧集地址是惰性伪链接，复制/外部播放前先换成真实播放地址 */
   const resolvePlayableAddress = useCallback(async (): Promise<string | null> => {

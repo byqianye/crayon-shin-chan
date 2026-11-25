@@ -819,6 +819,71 @@ check(
   { ep: '自检第02集', line: 0, ep2: 1, name: '自检影片甲' }
 )
 
+// 桩播放列表只声明 6 秒且没有可解码分片；在播放器创建前控制媒体属性，
+// 避免 HLS 先报告 6 秒，让 90 秒的测试进度被正确判断为超出实际时长。
+const historyPosition = "window.api.library.get().then(l => l.history.flatMap(g => g.items).find(i => i.siteKey === 'self_cms_base' && i.vodId === '1')?.position)"
+await evalJs(`(() => {
+  const proto = HTMLMediaElement.prototype;
+  window.__selftestMedia = {
+    duration: Object.getOwnPropertyDescriptor(proto, 'duration'),
+    currentTime: Object.getOwnPropertyDescriptor(proto, 'currentTime'),
+    positions: new WeakMap(), durationValue: 600
+  };
+  Object.defineProperty(proto, 'duration', { configurable: true, get() { return window.__selftestMedia.durationValue } });
+  Object.defineProperty(proto, 'currentTime', { configurable: true,
+    get() { return window.__selftestMedia.positions.get(this) ?? 0 },
+    set(value) { window.__selftestMedia.positions.set(this, value) }
+  });
+})()`)
+try {
+  await evalJs(`(() => {
+    const video = document.querySelector('.player-stage video');
+    video.currentTime = 90;
+    video.dispatchEvent(new Event('pause'));
+  })()`)
+  check('暂停时保存实际观看进度', await waitFor(historyPosition, (v) => v === 90), 90)
+  check('暂停时保存可恢复的有效时长', await evalJs("window.api.library.get().then(l => l.history.flatMap(g => g.items).find(i => i.siteKey === 'self_cms_base' && i.vodId === '1')?.duration)"), 600)
+  await goto('#/library', '收藏与历史')
+  await evalJs("[...document.querySelectorAll('.chips .chip')].find(c => c.textContent.includes('观看历史')).click()")
+  await waitFor("document.querySelectorAll('.history-actions a').length", (v) => v >= 1)
+  await evalJs("document.querySelector('.history-actions a').click()")
+  await waitFor("document.querySelectorAll('.player-stage video').length", (v) => v >= 1)
+  await evalJs(`(() => {
+    const video = document.querySelector('.player-stage video');
+    video.dispatchEvent(new Event('loadedmetadata'));
+  })()`)
+  check('继续观看恢复到上次保存的秒数', await evalJs("document.querySelector('.player-stage video').currentTime"), 90)
+  await evalJs("document.querySelector('.player-stage video').currentTime = 137")
+  await goto('#/library', '收藏与历史')
+  check('离开播放页保存节流间隔内的最后进度', await waitFor(historyPosition, (v) => v === 137), 137)
+  await evalJs('window.__selftestMedia.durationValue = 0')
+  await evalJs("location.hash = '#/play/self_cms_base/1/0/1'")
+  await waitFor("document.querySelectorAll('.player-stage video').length", (v) => v >= 1)
+  await evalJs(`(() => {
+    const video = document.querySelector('.player-stage video');
+    window.__selftestMedia.durationValue = 600;
+    video.dispatchEvent(new Event('durationchange'));
+  })()`)
+  check('延迟获得时长后仍能恢复进度', await evalJs("document.querySelector('.player-stage video').currentTime"), 137)
+  await evalJs(`(() => {
+    const video = document.querySelector('.player-stage video');
+    video.currentTime = 145;
+    video.dispatchEvent(new Event('loadedmetadata'));
+  })()`)
+  check('重复媒体事件不会把进度拉回旧位置', await evalJs("document.querySelector('.player-stage video').currentTime"), 145)
+  await evalJs("location.hash = '#/play/self_cms_base/1/0/0'")
+  const currentEpisode = "window.api.library.get().then(l => l.history.flatMap(g => g.items).find(i => i.siteKey === 'self_cms_base' && i.vodId === '1')?.epIndex)"
+  check('相同播放地址切集也更新历史集数', await waitFor(currentEpisode, (v) => v === 0), 0)
+  check('切集不会沿用上一集的播放位置', await evalJs("document.querySelector('.player-stage video').currentTime"), 0)
+} finally {
+  await evalJs(`(() => {
+    const saved = window.__selftestMedia;
+    Object.defineProperty(HTMLMediaElement.prototype, 'duration', saved.duration);
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', saved.currentTime);
+    delete window.__selftestMedia;
+  })()`)
+}
+
 await goto('#/library', '收藏与历史')
 check('收藏页显示 1 张收藏卡', await evalJs("document.querySelectorAll('.vod-card').length"), 1)
 check(

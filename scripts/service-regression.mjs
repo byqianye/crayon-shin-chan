@@ -6,6 +6,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { EventEmitter } from 'node:events'
 import { esbuildExe, projectRoot } from './lib/spider-bundle.mjs'
 
 const root = projectRoot()
@@ -57,18 +58,106 @@ try {
   const stub = join(temp, 'electron.cjs')
   await writeFile(stub, 'module.exports={app:{isPackaged:false,getAppPath:()=>' + JSON.stringify(root) + ',getPath:()=>' + JSON.stringify(temp) + '}}')
   const entry = join(temp, 'entry.ts')
-  const modules = ['cms', 'cmsApi', 'config', 'http', 'search', 'category', 'home', 'detail', 'store', 'sources', 'sites', 'spider', 'audit', 'mediaHeaders', 'multirepo', 'presets']
+  const modules = ['cms', 'cmsApi', 'config', 'http', 'search', 'category', 'home', 'detail', 'store', 'sources', 'sites', 'spider', 'audit', 'mediaHeaders', 'multirepo', 'presets', 'library']
   await writeFile(entry, modules.map((name) => 'export * as ' + name + ' from ' + JSON.stringify(join(root, 'src/main/services', name + '.ts'))).join('\n') +
     '\nexport * as merge from ' + JSON.stringify(join(root, 'src/core/dedupe/merge.ts')) +
     '\nexport * as normalize from ' + JSON.stringify(join(root, 'src/core/dedupe/normalize.ts')) +
     '\nexport * as detect from ' + JSON.stringify(join(root, 'src/core/source/detect.ts')) +
-    '\nexport * as renderer from ' + JSON.stringify(join(root, 'src/renderer/src/store/useApp.ts')))
+    '\nexport * as renderer from ' + JSON.stringify(join(root, 'src/renderer/src/store/useApp.ts')) +
+    '\nexport * as playback from ' + JSON.stringify(join(root, 'src/renderer/src/utils/playbackHistory.ts')))
   const bundle = join(temp, 'service.cjs')
   const build = spawnSync(esbuildExe(), [entry, '--bundle', '--platform=node', '--format=cjs',
     '--outfile=' + bundle, '--alias:electron=' + stub, '--alias:@=' + join(root, 'src/renderer/src'),
     '--tsconfig=' + join(root, 'tsconfig.node.json'), '--log-level=error'], { stdio: 'inherit' })
   assert.equal(build.status, 0, 'service bundle compiles')
   svc = createRequire(import.meta.url)(bundle)
+  const playbackEntry = { siteKey: 'json', siteName: 'JSON', vodId: '1', name: '进度测试',
+    lineIndex: 0, epIndex: 1, epName: '第2集' }
+  const previousPlayback = { ...playbackEntry, position: 90, duration: 600, updatedAt: 1 }
+  const makePlayer = (duration = 0) => Object.assign(new EventEmitter(), { currentTime: 0, duration, notice: {} })
+  await check('Playback resumes after delayed duration and never rewinds on repeated metadata', () => {
+    const art = makePlayer()
+    const stop = svc.playback.trackPlaybackHistory(art, playbackEntry, previousPlayback, async () => {})
+    art.emit('video:loadedmetadata')
+    assert.equal(art.currentTime, 0)
+    art.duration = Infinity
+    art.emit('video:durationchange')
+    assert.equal(art.currentTime, 0)
+    art.duration = 600
+    art.emit('video:durationchange')
+    assert.equal(art.currentTime, 90)
+    art.currentTime = 120
+    art.emit('video:loadedmetadata')
+    art.emit('video:canplay')
+    assert.equal(art.currentTime, 120)
+    stop()
+  })
+  await check('Playback keeps episodes, lines, sites and videos separate and rejects invalid progress', () => {
+    for (const patch of [{ siteKey: 'other' }, { vodId: '2' }, { lineIndex: 1 }, { epIndex: 0 },
+      { position: 600 }, { position: 700 }, { position: -1 }, { position: NaN },
+      { position: Infinity }, { duration: 0 }, { duration: Infinity }]) {
+      const art = makePlayer(600)
+      const stop = svc.playback.trackPlaybackHistory(art, playbackEntry, { ...previousPlayback, ...patch }, async () => {})
+      art.emit('video:loadedmetadata')
+      assert.equal(art.currentTime, 0, JSON.stringify(patch))
+      stop()
+    }
+    const shorter = makePlayer(60)
+    const stop = svc.playback.trackPlaybackHistory(shorter, playbackEntry, previousPlayback, async () => {})
+    assert.equal(shorter.currentTime, 0, 'saved position exceeds the new duration')
+    stop()
+  })
+  await check('Playback throttles updates, saves on exit and releases listeners exactly once', () => {
+    const saved = []
+    const art = makePlayer(600)
+    const stop = svc.playback.trackPlaybackHistory(art, playbackEntry, undefined, async (entry) => { saved.push(entry) })
+    for (let i = 1; i < 5; i++) { art.currentTime = i; art.emit('video:timeupdate') }
+    assert.equal(saved.length, 1)
+    art.currentTime = 13.9
+    stop()
+    assert.equal(saved.length, 2)
+    assert.equal(saved[1].position, 13)
+    assert.equal(saved[1].duration, 600)
+    stop()
+    art.emit('video:pause')
+    art.emit('video:timeupdate')
+    assert.equal(saved.length, 2)
+    assert.deepEqual(art.eventNames(), [])
+  })
+  await check('Playback preserves saved progress until metadata and starts the next episode at zero', async () => {
+    await svc.library.recordHistory(previousPlayback)
+    const art = makePlayer()
+    const stop = svc.playback.trackPlaybackHistory(art, playbackEntry, previousPlayback, svc.library.recordHistory)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal((await svc.library.listHistory())[0].items[0].position, 90)
+    art.duration = 600
+    art.emit('video:loadedmetadata')
+    art.currentTime = 137
+    stop()
+    await new Promise((resolve) => setImmediate(resolve))
+    const saved = (await svc.library.listHistory())[0].items[0]
+    assert.equal(saved.position, 137)
+    const next = makePlayer()
+    const stopNext = svc.playback.trackPlaybackHistory(next, { ...playbackEntry, epIndex: 2 }, saved, svc.library.recordHistory)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal((await svc.library.listHistory())[0].items[0].position, 0)
+    assert.equal(next.currentTime, 0)
+    stopNext()
+  })
+  await check('Playback reports save failures and normalizes non-finite media values', async () => {
+    const art = makePlayer(Infinity)
+    art.currentTime = NaN
+    const saved = []
+    const stop = svc.playback.trackPlaybackHistory(art, playbackEntry, undefined, async (entry) => {
+      saved.push(entry)
+      throw new Error('fixture write failed')
+    })
+    await Promise.resolve()
+    assert.equal(saved[0].position, 0)
+    assert.equal(saved[0].duration, 0)
+    assert.match(art.notice.show, /fixture write failed/)
+    stop()
+  })
   const ctx = { sourceId: 'fixture', sourceName: 'fixture' }
   const site = svc.config.normalizeSite({ key: 'json', name: 'JSON', type: 3, api: base + '/json' }, ctx)
   const xmlSite = svc.config.normalizeSite({ key: 'xml', name: 'XML', type: 3, api: base + '/xml' }, ctx)
