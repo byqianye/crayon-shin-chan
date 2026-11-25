@@ -30,6 +30,36 @@ static SECRET_ENV: LazyLock<Regex> = LazyLock::new(|| {
 });
 type Reply = oneshot::Sender<std::result::Result<Value, String>>;
 
+struct PendingRequest {
+    session: Arc<Session>,
+    id: u64,
+    armed: bool,
+}
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        if !self.armed
+            || !self
+                .session
+                .pending
+                .lock()
+                .expect("pending lock")
+                .remove(&self.id)
+                .is_some()
+        {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let session = self.session.clone();
+            let id = self.id;
+            runtime.spawn(async move {
+                let _ = session
+                    .write(&json!({"id":0,"method":"cancel","params":{"id":id}}))
+                    .await;
+            });
+        }
+    }
+}
+
 pub struct Spider {
     pub root: PathBuf,
     pub store: Arc<Store>,
@@ -550,7 +580,7 @@ impl Session {
         }
     }
     async fn send(
-        &self,
+        self: &Arc<Self>,
         method: &str,
         params: Value,
         timeout: f64,
@@ -566,11 +596,17 @@ impl Session {
         let id = self.next.fetch_add(1, Ordering::AcqRel);
         let (reply, receive) = oneshot::channel();
         self.pending.lock().expect("pending lock").insert(id, reply);
+        let mut pending_request = PendingRequest {
+            session: self.clone(),
+            id,
+            armed: true,
+        };
         if let Err(error) = self
             .write(&json!({"id":id,"method":method,"params":params}))
             .await
         {
             self.pending.lock().expect("pending lock").remove(&id);
+            pending_request.armed = false;
             return Err(error);
         }
         let response = tokio::select! {
@@ -588,6 +624,7 @@ impl Session {
             .expect("pending lock")
             .remove(&id)
             .is_some();
+        pending_request.armed = false;
         if pending {
             let _ = self
                 .write(&json!({"id":0,"method":"cancel","params":{"id":id}}))
@@ -670,4 +707,27 @@ pub fn classify_failure(message: &str) -> &'static str {
         .find(|(pattern, _)| pattern.is_match(message))
         .map(|(_, kind)| *kind)
         .unwrap_or("unknown")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dropping_request_releases_host_pending_slot() {
+        let folder = tempfile::tempdir().unwrap();
+        let spider = Spider::new(
+            Arc::new(Store::open(folder.path()).unwrap()),
+            Net::new().unwrap(),
+        );
+        let session = spider.ready().await.unwrap();
+        let cancel = CancellationToken::new();
+        let mut request = Box::pin(session.send("ping", json!({}), 10.0, &cancel));
+        assert!(futures_util::poll!(&mut request).is_pending());
+        assert_eq!(session.pending.lock().unwrap().len(), 1);
+        drop(request);
+        let released = session.pending.lock().unwrap().is_empty();
+        spider.stop().await.unwrap();
+        assert!(released, "切页丢弃请求时须释放宿主待响应槽");
+    }
 }

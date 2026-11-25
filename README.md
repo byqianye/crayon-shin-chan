@@ -19,6 +19,8 @@ Windows 影视聚合客户端，支持 TVBox 配置订阅。v0.1.7 起，桌面�
 
 上图是原版历史截图，展示样式与功能布局，不代表当前源站可用性。迁移说明与实测边界见 [Rust 文档](native-rust/README.md)，完整历史见 [CHANGELOG](CHANGELOG.md)，配置规范见 [功能框架](功能框架.txt)。
 
+工作区新增首页与分类的逐步加载、目录缓存复用和旧请求取消，说明及验收记录见 [加载优化](native-rust/README.md#加载优化工作区实现尚未发布)。这些改动尚未包含在已发布的 v0.1.7 安装包中。
+
 ## 下载安装
 
 从 [Releases](https://github.com/byqianye/crayon-shin-chan/releases) 下载同一版本的文件：

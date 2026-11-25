@@ -178,7 +178,7 @@ pub(super) fn Loading(#[props(default="正在加载…".into())] text: String) -
 #[component]
 pub(super) fn Poster(src: String, name: String, #[props(default)] class: String) -> Element {
     let mut failed = use_signal(|| false);
-    rsx! {div{class:"poster {class}",if !src.is_empty()&&!*failed.read(){img{src,alt:"",loading:"lazy",draggable:"false",onerror:move|_|failed.set(true)}}else{span{class:"poster-fallback","{name.trim().chars().next().unwrap_or('?')}"}}}}
+    rsx! {div{class:"poster {class}",if !src.is_empty()&&!*failed.read(){img{src,alt:"",loading:"lazy",decoding:"async",draggable:"false",onerror:move|_|failed.set(true)}}else{span{class:"poster-fallback","{name.trim().chars().next().unwrap_or('?')}"}}}}
 }
 #[component]
 pub(super) fn VodCard(vod: Value) -> Element {

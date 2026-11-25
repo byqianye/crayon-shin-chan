@@ -23,6 +23,7 @@ pub struct Catalogue {
     search_cancel: Mutex<CancellationToken>,
 }
 pub type SearchProgress = Arc<dyn Fn(Value, usize, usize) + Send + Sync>;
+pub type LoadProgress = Arc<dyn Fn(Value) + Send + Sync>;
 
 impl Catalogue {
     pub fn new(sources: Arc<Sources>) -> Self {
@@ -386,9 +387,20 @@ impl Catalogue {
     }
 
     pub async fn home(self: &Arc<Self>, force: bool) -> Result<Vec<Value>> {
+        self.home_with_progress(force, None).await
+    }
+
+    pub async fn home_with_progress(
+        self: &Arc<Self>,
+        force: bool,
+        on_progress: Option<LoadProgress>,
+    ) -> Result<Vec<Value>> {
         let revision = self.sources.revision();
         let key = format!("home:{revision}");
         if !force && let Some(value) = self.cache.read(&key) {
+            if let Some(callback) = &on_progress {
+                callback(value.clone());
+            }
             return Ok(array(&value));
         }
         let sites = self.sources.sites()?;
@@ -457,33 +469,61 @@ impl Catalogue {
                 plans.push(json!({"key":format!("{}::latest",s(site,"key")),"title":format!("{} · 最近更新",s(site,"name")),"origin":"default","site":site,"typeId":""}));
             }
         }
-        let this = self.clone();
-        let cache_key = key.clone();
-        let value = self
-            .cache
-            .coalesce(key, async move {
-                let sections: Vec<_> = stream::iter(plans.into_iter().map(|plan| {
-                    let this = this.clone();
-                    async move { this.home_section(plan).await }
-                }))
-                .buffered(this.concurrency())
-                .collect()
-                .await;
-                let ttl = if sections.iter().any(|v| v.get("error").is_some()) {
-                    60
-                } else {
-                    600
-                };
-                let value = json!(sections);
-                if revision == this.sources.revision() {
-                    this.cache
-                        .insert(cache_key, value.clone(), Duration::from_secs(ttl), 512);
-                }
-                Ok(value)
-            })
-            .await?;
-        let mut sections = array(&value);
+        let mut sections: Vec<_> = plans.iter().map(|plan| {
+            json!({"key":plan["key"],"title":plan["title"],"origin":plan["origin"],"siteKey":plan["site"]["key"],"siteName":plan["site"]["name"],"items":[],"loading":true})
+        }).collect();
         sections.append(&mut missing);
+        if let Some(callback) = &on_progress {
+            callback(json!(sections));
+        }
+        let mut tasks = stream::iter(plans.into_iter().enumerate().map(
+            |(index, plan)| async move {
+                let key = format!("home-section:{revision}:{plan}");
+                if !force && let Some(value) = self.cache.read(&key) {
+                    return Ok((index, value));
+                }
+                let this = self.clone();
+                let cache_key = key.clone();
+                let value = self
+                    .cache
+                    .coalesce(key, async move {
+                        let value = this.home_section(plan).await;
+                        let ttl = if value.get("error").is_some() {
+                            60
+                        } else {
+                            600
+                        };
+                        if revision == this.sources.revision() {
+                            this.cache.insert(
+                                cache_key,
+                                value.clone(),
+                                Duration::from_secs(ttl),
+                                512,
+                            );
+                        }
+                        Ok(value)
+                    })
+                    .await?;
+                Ok::<_, anyhow::Error>((index, value))
+            },
+        ))
+        .buffer_unordered(self.concurrency());
+        while let Some(result) = tasks.next().await {
+            let (index, section) = result?;
+            sections[index] = section;
+            if let Some(callback) = &on_progress {
+                callback(json!(sections));
+            }
+        }
+        let ttl = if sections.iter().any(|v| v.get("error").is_some()) {
+            60
+        } else {
+            600
+        };
+        if revision == self.sources.revision() {
+            self.cache
+                .insert(key, json!(sections), Duration::from_secs(ttl), 512);
+        }
         Ok(sections)
     }
 

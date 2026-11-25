@@ -1,16 +1,20 @@
 use crate::{
-    catalogue::{Catalogue, fail, interleave, success},
+    catalogue::{Catalogue, LoadProgress, fail, interleave, success},
     cms,
     model::{array, number, s},
 };
 use anyhow::{Context, Result, bail};
-use futures_util::{StreamExt, stream};
+use futures_util::{
+    FutureExt, StreamExt,
+    future::BoxFuture,
+    stream::{self, FuturesUnordered},
+};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, LazyLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -194,158 +198,164 @@ pub fn leaves(classes: &[Value]) -> Vec<Value> {
 
 impl Catalogue {
     pub async fn categories(self: &Arc<Self>) -> Result<Vec<Value>> {
-        let trees: Vec<_> = stream::iter(self.available()?.into_iter().map(|site| async move {
-            let classes = self.classes(&site).await;
-            (site, classes)
-        }))
-        .buffered(self.concurrency())
-        .collect()
-        .await;
-        let mut buckets: Vec<Value> = Vec::new();
-        for (site, classes) in trees {
-            let classes = match classes {
-                Ok(v) => v,
+        self.categories_with_progress(None).await
+    }
+
+    pub async fn categories_with_progress(
+        self: &Arc<Self>,
+        on_progress: Option<LoadProgress>,
+    ) -> Result<Vec<Value>> {
+        let revision = self.sources.revision();
+        if let Some(value) = self.cache.read(&format!("categories:{revision}")) {
+            if let Some(callback) = &on_progress {
+                callback(value.clone());
+            }
+            return Ok(array(&value));
+        }
+        let sites = self.available()?;
+        let mut trees = vec![None; sites.len()];
+        let mut failed = false;
+        let mut tasks = stream::iter(sites.into_iter().enumerate().map(
+            |(index, site)| async move {
+                let classes = self.classes(&site).await;
+                (index, site, classes)
+            },
+        ))
+        .buffer_unordered(self.concurrency());
+        while let Some((index, site, classes)) = tasks.next().await {
+            match classes {
+                Ok(classes) => trees[index] = Some((site, classes)),
                 Err(error) => {
+                    failed = true;
                     eprintln!("[category] {}：{error:#}", s(&site, "name"));
-                    continue;
-                }
-            };
-            for leaf in leaves(&classes) {
-                let bucket = s(&leaf, "bucket");
-                let sub = s(&leaf, "sub");
-                let bi = if let Some(i) = buckets.iter().position(|v| s(v, "name") == bucket) {
-                    i
-                } else {
-                    buckets.push(json!({"name":bucket,"subs":[]}));
-                    buckets.len() - 1
-                };
-                let subs = buckets[bi]["subs"].as_array_mut().expect("subs");
-                let si = if let Some(i) = subs.iter().position(|v| s(v, "name") == sub) {
-                    i
-                } else {
-                    subs.push(json!({"name":sub,"order":leaf["order"],"sites":[]}));
-                    subs.len() - 1
-                };
-                let sites = subs[si]["sites"].as_array_mut().expect("sites");
-                let ei = if let Some(i) = sites.iter().position(|v| v["siteKey"] == site["key"]) {
-                    i
-                } else {
-                    sites.push(json!({"siteKey":site["key"],"siteName":site["name"],"typeIds":[]}));
-                    sites.len() - 1
-                };
-                let ids = sites[ei]["typeIds"].as_array_mut().expect("ids");
-                if !ids.contains(&leaf["id"]) {
-                    ids.push(leaf["id"].clone());
                 }
             }
-        }
-        for bucket in &mut buckets {
-            let subs = bucket["subs"].as_array_mut().expect("subs");
-            subs.sort_by(|a, b| {
-                number(&a["order"], 0.0)
-                    .total_cmp(&number(&b["order"], 0.0))
-                    .then_with(|| crate::model::compare_cn(&s(a, "name"), &s(b, "name")))
-            });
-            for sub in subs {
-                sub.as_object_mut().expect("sub").remove("order");
+            if let Some(callback) = &on_progress {
+                callback(json!(merge_categories(&trees)));
             }
         }
-        buckets.sort_by_key(|v| {
-            ORDER
-                .iter()
-                .position(|name| *name == s(v, "name"))
-                .unwrap_or(ORDER.len())
-        });
+        let buckets = merge_categories(&trees);
+        self.cache_categories(revision, &buckets, failed);
         Ok(buckets)
     }
 
     pub async fn browse(self: &Arc<Self>, bucket: &str, sub: &str, page: usize) -> Result<Value> {
-        let target = self
-            .categories()
-            .await?
-            .into_iter()
-            .find(|v| s(v, "name") == bucket)
-            .with_context(|| format!("没有找到「{bucket}」这个分类"))?;
-        let subs: Vec<_> = array(&target["subs"])
-            .into_iter()
-            .filter(|v| sub.is_empty() || s(v, "name") == sub)
-            .collect();
-        if subs.is_empty() {
-            bail!("「{bucket}」下没有「{sub}」这个子分类");
-        }
-        let sites: HashMap<_, _> = self
-            .available()?
-            .into_iter()
-            .map(|v| (s(&v, "key"), v))
-            .collect();
-        let mut jobs = Vec::new();
-        let mut seen = HashSet::new();
-        for sub in subs {
-            for entry in array(&sub["sites"]) {
-                let key = s(&entry, "siteKey");
-                if let Some(site) = sites.get(&key) {
-                    for id in array(&entry["typeIds"]) {
-                        let id = crate::model::text(&id);
-                        if seen.insert((key.clone(), id.clone())) {
-                            jobs.push((site.clone(), id));
+        self.browse_with_progress(bucket, sub, page, None).await
+    }
+
+    pub async fn browse_with_progress(
+        self: &Arc<Self>,
+        bucket: &str,
+        sub: &str,
+        page: usize,
+        on_progress: Option<LoadProgress>,
+    ) -> Result<Value> {
+        let revision = self.sources.revision();
+        let sites = self.available()?;
+        let mut trees = vec![None; sites.len()];
+        let mut categories = self
+            .cache
+            .read(&format!("categories:{revision}"))
+            .map(|v| array(&v));
+        let mut jobs: VecDeque<_> = if let Some(categories) = &categories {
+            browse_jobs(categories, &sites, bucket, sub)
+                .into_iter()
+                .map(|(i, id)| BrowseJob::Page(i, id))
+                .collect()
+        } else {
+            (0..sites.len()).map(BrowseJob::Classes).collect()
+        };
+        let mut scheduled = HashSet::new();
+        let mut pages = HashMap::new();
+        let mut failed = false;
+        let mut classified = 0;
+        let mut pending: FuturesUnordered<BoxFuture<'_, BrowseEvent>> = FuturesUnordered::new();
+        loop {
+            while pending.len() < self.concurrency() {
+                let Some(job) = jobs.pop_front() else {
+                    break;
+                };
+                let sites = &sites;
+                pending.push(
+                    async move {
+                        match job {
+                            BrowseJob::Classes(i) => {
+                                BrowseEvent::Classes(i, self.classes(&sites[i]).await)
+                            }
+                            BrowseJob::Page(i, id) => {
+                                let result = self.browse_site(&sites[i], &id, page, 30).await;
+                                BrowseEvent::Page((i, id), result)
+                            }
                         }
                     }
+                    .boxed(),
+                );
+            }
+            let Some(event) = pending.next().await else {
+                break;
+            };
+            match event {
+                BrowseEvent::Classes(index, result) => {
+                    classified += 1;
+                    match result {
+                        Ok(classes) => trees[index] = Some((sites[index].clone(), classes)),
+                        Err(error) => {
+                            failed = true;
+                            eprintln!("[category] {}：{error:#}", s(&sites[index], "name"));
+                        }
+                    }
+                    let snapshot = merge_categories(&trees);
+                    // 已知分类的内容优先启动，避免再次等待其余站点的目录。
+                    for (index, id) in browse_jobs(&snapshot, &sites, bucket, sub)
+                        .into_iter()
+                        .rev()
+                    {
+                        if scheduled.insert((index, id.clone())) {
+                            jobs.push_front(BrowseJob::Page(index, id));
+                        }
+                    }
+                    if classified == sites.len() {
+                        self.cache_categories(revision, &snapshot, failed);
+                    }
+                    categories = Some(snapshot);
+                }
+                BrowseEvent::Page(key, result) => {
+                    pages.insert(key, result);
                 }
             }
-        }
-        let pages: Vec<_> = stream::iter(jobs.into_iter().map(|(site, id)| async move {
-            let (result, depth) = self.browse_site(&site, &id, page, 30).await;
-            (site, result, depth)
-        }))
-        .buffered(self.concurrency())
-        .collect()
-        .await;
-        let mut per_site: Vec<(Value, Vec<Value>, usize)> = Vec::new();
-        for (site, result, depth) in pages {
-            let index = if let Some(i) = per_site
-                .iter()
-                .position(|(v, _, _)| v["key"] == site["key"])
+            if let Some(callback) = &on_progress
+                && !pages.is_empty()
             {
-                i
-            } else {
-                per_site.push((site, Vec::new(), 0));
-                per_site.len() - 1
-            };
-            per_site[index].1.push(result);
-            per_site[index].2 = per_site[index].2.max(depth);
-        }
-        let mut results = Vec::new();
-        let mut page_count = page;
-        for (site, parts, depth) in per_site {
-            let lists: Vec<_> = parts
-                .iter()
-                .filter(|v| v["ok"] == true)
-                .map(|v| array(&v["list"]))
-                .collect();
-            let list: Vec<_> = interleave(&lists).into_iter().take(30).collect();
-            if list.is_empty() {
-                results.push(
-                    parts
-                        .iter()
-                        .find(|v| v["ok"] == false)
-                        .cloned()
-                        .unwrap_or_else(|| fail(&site, "这个分类下没有返回内容", 0)),
+                let order = browse_jobs(
+                    categories.as_deref().unwrap_or_default(),
+                    &sites,
+                    bucket,
+                    sub,
                 );
-            } else {
-                page_count = page_count.max(depth);
-                results.push(success(
-                    &site,
-                    list,
-                    parts
-                        .iter()
-                        .map(|v| number(&v["ms"], 0.0) as u64)
-                        .max()
-                        .unwrap_or(0),
-                    "返回",
-                ));
+                callback(browse_result(&sites, &order, &pages, bucket, sub, page));
             }
         }
-        Ok(json!({"page":page,"pageCount":page_count,"bucket":bucket,"sub":sub,"results":results}))
+        let categories = categories.unwrap_or_default();
+        let target = categories
+            .iter()
+            .find(|v| s(v, "name") == bucket)
+            .with_context(|| format!("没有找到「{bucket}」这个分类"))?;
+        if !sub.is_empty() && !array(&target["subs"]).iter().any(|v| s(v, "name") == sub) {
+            bail!("「{bucket}」下没有「{sub}」这个子分类");
+        }
+        let order = browse_jobs(&categories, &sites, bucket, sub);
+        Ok(browse_result(&sites, &order, &pages, bucket, sub, page))
+    }
+
+    fn cache_categories(&self, revision: u64, categories: &[Value], failed: bool) {
+        if revision == self.sources.revision() {
+            self.cache.insert(
+                format!("categories:{revision}"),
+                json!(categories),
+                Duration::from_secs(if failed { 60 } else { 600 }),
+                512,
+            );
+        }
     }
 
     async fn browse_site(
@@ -403,4 +413,174 @@ impl Catalogue {
             Err(error) => (fail(site, &format!("{error:#}"), ms), 0),
         }
     }
+}
+
+type CategoryTree = Option<(Value, Vec<Value>)>;
+
+pub fn merge_browse_pages(previous: &[Value], current: &[Value]) -> Vec<Value> {
+    let mut results = previous.to_vec();
+    for mut next in current.iter().cloned() {
+        if let Some(old) = results.iter_mut().find(|v| v["siteKey"] == next["siteKey"]) {
+            let mut items = array(&old["list"]);
+            let mut seen: HashSet<_> = items.iter().map(|v| s(v, "vod_id")).collect();
+            items.extend(
+                array(&next["list"])
+                    .into_iter()
+                    .filter(|v| seen.insert(s(v, "vod_id"))),
+            );
+            next["list"] = json!(items);
+            *old = next;
+        } else {
+            results.push(next);
+        }
+    }
+    results
+}
+
+type PageKey = (usize, String);
+enum BrowseJob {
+    Classes(usize),
+    Page(usize, String),
+}
+enum BrowseEvent {
+    Classes(usize, Result<Vec<Value>>),
+    Page(PageKey, (Value, usize)),
+}
+
+fn merge_categories(trees: &[CategoryTree]) -> Vec<Value> {
+    let mut buckets: Vec<Value> = Vec::new();
+    for (site, classes) in trees.iter().flatten() {
+        for leaf in leaves(classes) {
+            let bucket = s(&leaf, "bucket");
+            let sub = s(&leaf, "sub");
+            let bi = if let Some(i) = buckets.iter().position(|v| s(v, "name") == bucket) {
+                i
+            } else {
+                buckets.push(json!({"name":bucket,"subs":[]}));
+                buckets.len() - 1
+            };
+            let subs = buckets[bi]["subs"].as_array_mut().expect("subs");
+            let si = if let Some(i) = subs.iter().position(|v| s(v, "name") == sub) {
+                i
+            } else {
+                subs.push(json!({"name":sub,"order":leaf["order"],"sites":[]}));
+                subs.len() - 1
+            };
+            let sites = subs[si]["sites"].as_array_mut().expect("sites");
+            let ei = if let Some(i) = sites.iter().position(|v| v["siteKey"] == site["key"]) {
+                i
+            } else {
+                sites.push(json!({"siteKey":site["key"],"siteName":site["name"],"typeIds":[]}));
+                sites.len() - 1
+            };
+            let ids = sites[ei]["typeIds"].as_array_mut().expect("ids");
+            if !ids.contains(&leaf["id"]) {
+                ids.push(leaf["id"].clone());
+            }
+        }
+    }
+    for bucket in &mut buckets {
+        let subs = bucket["subs"].as_array_mut().expect("subs");
+        subs.sort_by(|a, b| {
+            number(&a["order"], 0.0)
+                .total_cmp(&number(&b["order"], 0.0))
+                .then_with(|| crate::model::compare_cn(&s(a, "name"), &s(b, "name")))
+        });
+        for sub in subs {
+            sub.as_object_mut().expect("sub").remove("order");
+        }
+    }
+    buckets.sort_by_key(|v| {
+        ORDER
+            .iter()
+            .position(|name| *name == s(v, "name"))
+            .unwrap_or(ORDER.len())
+    });
+    buckets
+}
+
+fn browse_jobs(categories: &[Value], sites: &[Value], bucket: &str, sub: &str) -> Vec<PageKey> {
+    let mut jobs = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(target) = categories.iter().find(|v| s(v, "name") == bucket) {
+        for sub in array(&target["subs"])
+            .into_iter()
+            .filter(|v| sub.is_empty() || s(v, "name") == sub)
+        {
+            for entry in array(&sub["sites"]) {
+                if let Some(index) = sites.iter().position(|v| v["key"] == entry["siteKey"]) {
+                    for id in array(&entry["typeIds"]) {
+                        let key = (index, crate::model::text(&id));
+                        if seen.insert(key.clone()) {
+                            jobs.push(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    jobs
+}
+
+fn browse_result(
+    sites: &[Value],
+    order: &[PageKey],
+    pages: &HashMap<PageKey, (Value, usize)>,
+    bucket: &str,
+    sub: &str,
+    page: usize,
+) -> Value {
+    let mut per_site: Vec<(Value, Vec<Value>, usize)> = Vec::new();
+    for key in order {
+        let site = &sites[key.0];
+        let index = if let Some(i) = per_site
+            .iter()
+            .position(|(v, _, _)| v["key"] == site["key"])
+        {
+            i
+        } else {
+            per_site.push((site.clone(), Vec::new(), 0));
+            per_site.len() - 1
+        };
+        let Some((result, depth)) = pages.get(key) else {
+            continue;
+        };
+        per_site[index].1.push(result.clone());
+        per_site[index].2 = per_site[index].2.max(*depth);
+    }
+    let mut results = Vec::new();
+    let mut page_count = page;
+    for (site, parts, depth) in per_site {
+        if parts.is_empty() {
+            continue;
+        }
+        let lists: Vec<_> = parts
+            .iter()
+            .filter(|v| v["ok"] == true)
+            .map(|v| array(&v["list"]))
+            .collect();
+        let list: Vec<_> = interleave(&lists).into_iter().take(30).collect();
+        if list.is_empty() {
+            results.push(
+                parts
+                    .iter()
+                    .find(|v| v["ok"] == false)
+                    .cloned()
+                    .unwrap_or_else(|| fail(&site, "这个分类下没有返回内容", 0)),
+            );
+        } else {
+            page_count = page_count.max(depth);
+            results.push(success(
+                &site,
+                list,
+                parts
+                    .iter()
+                    .map(|v| number(&v["ms"], 0.0) as u64)
+                    .max()
+                    .unwrap_or(0),
+                "返回",
+            ));
+        }
+    }
+    json!({"page":page,"pageCount":page_count,"bucket":bucket,"sub":sub,"results":results})
 }

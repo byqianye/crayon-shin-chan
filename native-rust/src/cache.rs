@@ -15,6 +15,37 @@ use std::{
 };
 
 type Task = Shared<BoxFuture<'static, std::result::Result<Value, Arc<str>>>>;
+struct Pending {
+    id: u64,
+    task: Task,
+    waiters: usize,
+}
+struct Waiter<'a> {
+    cache: &'a Cache,
+    key: String,
+    id: u64,
+}
+impl Drop for Waiter<'_> {
+    fn drop(&mut self) {
+        let abandoned = {
+            let mut pending = self.cache.pending.lock().expect("pending lock");
+            if let Some(entry) = pending.get_mut(&self.key)
+                && entry.id == self.id
+            {
+                entry.waiters -= 1;
+                if entry.waiters == 0 {
+                    pending.remove(&self.key)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        // 请求可能包含另一层合并请求，须在解锁后析构。
+        drop(abandoned);
+    }
+}
 struct Entry {
     at: Instant,
     ttl: Duration,
@@ -23,7 +54,7 @@ struct Entry {
 #[derive(Default)]
 pub struct Cache {
     entries: Mutex<HashMap<String, Entry>>,
-    pending: Mutex<HashMap<String, (u64, Task)>>,
+    pending: Mutex<HashMap<String, Pending>>,
     next: AtomicU64,
 }
 
@@ -68,23 +99,28 @@ impl Cache {
     ) -> Result<Value> {
         let (id, task) = {
             let mut pending = self.pending.lock().expect("pending lock");
-            pending
-                .entry(key.clone())
-                .or_insert_with(|| {
-                    let id = self.next.fetch_add(1, Ordering::AcqRel);
-                    let task =
-                        async move { fetch.await.map_err(|e| Arc::<str>::from(format!("{e:#}"))) }
-                            .boxed()
-                            .shared();
-                    (id, task)
-                })
-                .clone()
+            let entry = pending.entry(key.clone()).or_insert_with(|| {
+                let id = self.next.fetch_add(1, Ordering::AcqRel);
+                let task =
+                    async move { fetch.await.map_err(|e| Arc::<str>::from(format!("{e:#}"))) }
+                        .boxed()
+                        .shared();
+                Pending {
+                    id,
+                    task,
+                    waiters: 0,
+                }
+            });
+            entry.waiters += 1;
+            (entry.id, entry.task.clone())
+        };
+        // 资源重启和切页会丢弃 future；最后一个等待者负责释放共享请求。
+        let _waiter = Waiter {
+            cache: self,
+            key,
+            id,
         };
         let result = task.await;
-        let mut pending = self.pending.lock().expect("pending lock");
-        if pending.get(&key).is_some_and(|v| v.0 == id) {
-            pending.remove(&key);
-        }
         result.map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 }
