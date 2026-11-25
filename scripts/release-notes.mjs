@@ -6,11 +6,12 @@ import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const args = process.argv.slice(2)
+const rust = args.includes('--rust')
 const index = args.indexOf('--version')
 const version = index >= 0 ? args[index + 1]?.replace(/^v/, '') : ''
 
 if (!version) {
-  throw new Error('用法：node scripts/release-notes.mjs --version 0.1.6 [--write]')
+  throw new Error('用法：node scripts/release-notes.mjs --rust --version 0.1.7 [--write]')
 }
 
 const changelog = await fs.readFile(join(root, 'CHANGELOG.md'), 'utf8')
@@ -31,18 +32,27 @@ const notes = [
   '',
   '## 安装',
   '',
-  `- \`CrayonShinChan-${version}-x64.exe\`：NSIS 安装版`,
-  `- \`CrayonShinChan-${version}-x64.zip\`：免安装版`,
-  `- \`CrayonShinChan-${version}-x64-lite.exe\`：精简版（不含 Spider 运行时，体积更小）`,
-  `- \`CrayonShinChan-${version}-x64-lite.zip\`：精简免安装版`,
-  '- 完整版用 `SHA256SUMS.txt`、精简版用 `SHA256SUMS-lite.txt` 核对文件完整性',
+  ...(rust ? [
+    `- CrayonShinChan-${version}-rust-x64.exe：Rust NSIS 安装版`,
+    `- CrayonShinChan-${version}-rust-x64.zip：Rust 免安装版`,
+    '- 使用 SHA256SUMS-rust.txt 核对文件完整性。包内包含完整 Spider 运行时。',
+    '- 需要系统 Microsoft Edge WebView2 Runtime；不需要安装 Rust、Node.js 或 Java。',
+    '- 默认安装到当前用户 Programs/crayon-shin-chan-rust，旧版数据请退出程序后复制到新目录。卸载保留 data。'
+  ] : [
+    `- CrayonShinChan-${version}-x64.exe：NSIS 安装版`,
+    `- CrayonShinChan-${version}-x64.zip：免安装版`,
+    `- CrayonShinChan-${version}-x64-lite.exe：精简版（不含 Spider 运行时）`,
+    `- CrayonShinChan-${version}-x64-lite.zip：精简免安装版`,
+    '- 完整版用 SHA256SUMS.txt、精简版用 SHA256SUMS-lite.txt 核对文件完整性'
+  ]),
   '',
   '程序没有代码签名证书，首次运行可能出现 Windows SmartScreen 提示。'
 ].join('\n')
 
-const output = join(root, 'release', 'RELEASE_NOTES.md')
+const directory = join(root, 'release', ...(rust ? ['rust'] : []))
+const output = join(directory, 'RELEASE_NOTES.md')
 if (args.includes('--write')) {
-  await fs.mkdir(join(root, 'release'), { recursive: true })
+  await fs.mkdir(directory, { recursive: true })
   await fs.writeFile(output, `${notes}\n`, 'utf8')
   console.log(`[release-notes] 已写入 ${output}`)
 } else {

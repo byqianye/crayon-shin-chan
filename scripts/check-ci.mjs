@@ -6,12 +6,13 @@ import { promises as fs } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const [ciRaw, releaseRaw, liveRaw, packageJson, selftestRunner] = await Promise.all([
+const [ciRaw, releaseRaw, liveRaw, packageJson, selftestRunner, rustPackager] = await Promise.all([
   fs.readFile(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'),
   fs.readFile(join(root, '.github', 'workflows', 'release.yml'), 'utf8'),
   fs.readFile(join(root, '.github', 'workflows', 'spider-live.yml'), 'utf8'),
   fs.readFile(join(root, 'package.json'), 'utf8').then(JSON.parse),
-  fs.readFile(join(root, 'scripts', 'ci-selftest.mjs'), 'utf8')
+  fs.readFile(join(root, 'scripts', 'ci-selftest.mjs'), 'utf8'),
+  fs.readFile(join(root, 'native-rust', 'scripts', 'package.ps1'), 'utf8')
 ])
 
 // 工作流在 Windows 上检出后可能是 CRLF，统一成 LF 再做结构断言
@@ -20,7 +21,9 @@ const release = releaseRaw.replace(/\r\n/g, '\n')
 const live = liveRaw.replace(/\r\n/g, '\n')
 
 const failed = []
+let total = 0
 function check(name, condition) {
+  total++
   if (!condition) failed.push(name)
 }
 
@@ -42,7 +45,8 @@ check('发布前运行离线服务回归', /node scripts\/service-regression\.mj
 check('发布前运行 Spider 契约', /node scripts\/spider-contract\.mjs/.test(release))
 check('发布前校验锁文件与工作流', /node scripts\/check-lockfile\.mjs/.test(release) && /node scripts\/check-ci\.mjs/.test(release))
 check('发布前运行端到端自检', /node scripts\/ci-selftest\.mjs/.test(release))
-check('发布工作流构建并校验精简包', /pnpm build:win:lite/.test(release) && /--lite/.test(release))
+check('发布工作流构建 Rust 包', /pnpm package:rust/.test(release) && !/pnpm build:win:lite/.test(release))
+check('发布前完成 Rust 检查与两种配置测试', /cargo check --locked/.test(release) && /cargo clippy --locked/.test(release) && /--tests/.test(release) && /--no-default-features/.test(release))
 check('发布工作流校验产物', /node scripts\/release-check\.mjs/.test(release))
 check('发布工作流生成校验清单', /--write-checksums/.test(release))
 check('发布工作流生成发布说明', /node scripts\/release-notes\.mjs/.test(release))
@@ -52,9 +56,13 @@ check('已有正式 Release 会拒绝覆盖', /已经是正式 Release，拒绝�
 check('发布资产缺失时报错', /没有找到可上传的发布资产/.test(release) && /发布资产不完整/.test(release))
 check('draft 任务在 gh 前检出仓库', /Publish draft GitHub Release[\s\S]*actions\/checkout@v4/.test(release) && /GH_REPO: \$\{\{ github\.repository \}\}/.test(release))
 check('packageManager 固定 pnpm 版本', packageJson.packageManager === 'pnpm@11.25.0')
-check('打包脚本禁止 electron-builder 隐式发布', /--publish never/.test(packageJson.scripts['build:win']))
+check('旧版打包脚本禁止 electron-builder 隐式发布', /--publish never/.test(packageJson.scripts['build:win:electron']))
+check('默认打包入口是 Rust', /native-rust\/scripts\/package\.ps1/.test(packageJson.scripts['build:win']))
+check('Rust NSIS 明确使用 UTF8 并拒绝编译警告', /\/INPUTCHARSET UTF8 \/WX/.test(rustPackager))
+check('Rust 打包独立验证 ZIP 内容', /verify-package\.ps1/.test(rustPackager))
 check('提供精简版打包脚本', /electron-builder\.lite\.yml/.test(packageJson.scripts['build:win:lite'] ?? ''))
-check('发布资产完整性包含精简包', /\$files\.Count -lt 9/.test(release) && /lite/.test(release))
+check('发布资产完整性包含 Rust 安装包、ZIP 与校验清单', /rust-x64\.exe/.test(release) && /rust-x64\.zip/.test(release) && /SHA256SUMS-rust\.txt/.test(release) && /foreach \(\$file in \$files\)/.test(release))
+check('CI 包含 Rust 格式、静态检查与回归', /cargo fmt/.test(ci) && /cargo clippy/.test(ci) && /cargo test/.test(ci) && /--no-default-features/.test(ci))
 check('真实 Spider 矩阵由定时任务触发', /schedule:/.test(live) && /spider-matrix\.mjs/.test(live))
 check('真实 Spider 矩阵报告作为 artifact 保存', /upload-artifact@v4/.test(live) && /spider-reports\//.test(live))
 
@@ -62,4 +70,4 @@ if (failed.length) {
   throw new Error(`[check-ci] 失败：${failed.join('、')}`)
 }
 
-console.log('[check-ci] 33 项工作流约束通过')
+console.log(`[PASS] [check-ci] ${total} 项工作流约束通过`)

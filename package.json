@@ -1,6 +1,6 @@
 {
   "name": "crayon-shin-chan",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "蜡笔小新 - Windows 影视聚合客户端",
   "main": "./out/main/index.js",
   "license": "MIT",
@@ -12,7 +12,10 @@
   },
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File native-rust/scripts/build.ps1 -Run",
+    "dev:electron": "electron-vite dev",
+    "build:rust": "pwsh -NoProfile -ExecutionPolicy Bypass -File native-rust/scripts/build.ps1 -Profile release",
+    "package:rust": "pwsh -NoProfile -ExecutionPolicy Bypass -File native-rust/scripts/package.ps1",
     "dev:debug": "electron-vite dev -- --remote-debugging-port=9222",
     "selftest": "node scripts/selftest.mjs",
     "icon:build": "node scripts/make-icon.mjs",
@@ -24,7 +27,7 @@
     "spider:smoke": "node scripts/spider-service-smoke.mjs",
     "spider:contract": "node scripts/spider-contract.mjs",
     "spider:matrix": "node scripts/spider-matrix.mjs --cases spider-tests/cases.json",
-    "release:check": "node scripts/release-check.mjs",
+    "release:check": "node scripts/release-check.mjs --rust",
     "lockfile:check": "node scripts/check-lockfile.mjs",
     "ci:check": "node scripts/check-ci.mjs",
     "preview": "electron-vite preview",
@@ -33,7 +36,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "build:win": "electron-vite build && electron-builder --win --publish never",
+    "build:win": "pwsh -NoProfile -ExecutionPolicy Bypass -File native-rust/scripts/package.ps1",
+    "build:win:electron": "electron-vite build && electron-builder --win --publish never",
     "build:win:lite": "electron-vite build && electron-builder --win --config electron-builder.lite.yml --publish never"
   },
   "dependencies": {

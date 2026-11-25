@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without the v prefix
+        description: Rust release version without the v prefix
         required: true
-        default: 0.1.6
+        default: 0.1.7
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,33 +19,33 @@ permissions:
 
 env:
   ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
-  ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+  ELECTRON_DISABLE_GPU: '1'
 
 jobs:
   package:
-    name: Windows release assets
+    name: Windows Rust release assets
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: pnpm/action-setup@v4
         with:
           version: 11.25.0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Resolve release version
         id: version
@@ -55,53 +55,62 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
-          if ($env:REF_TYPE -eq 'tag') {
-            $version = $env:REF_NAME -replace '^v', ''
-            $tag = $env:REF_NAME
-          } elseif ($env:INPUT_VERSION) {
-            $version = $env:INPUT_VERSION -replace '^v', ''
-            $tag = "v$version"
-          } else {
-            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-            $tag = "v$version"
-          }
+          $version = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME -replace '^v', '' } else { $env:INPUT_VERSION -replace '^v', '' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release version' }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
+          node scripts/release-check.mjs --source-only --rust --version $version
+          if ($LASTEXITCODE -ne 0) { throw 'Source version check failed' }
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Build Spider runtime
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm spider:deps
           pnpm spider:build
           pnpm spider:unidbg
           pnpm spider:runtime
-
-      - name: Type check
-        run: pnpm typecheck
-
-      - name: Verify application icons
-        run: pnpm icon:check
-
-      - name: Offline service regressions
-        run: node scripts/service-regression.mjs
-
-      - name: Spider contract tests
-        run: node scripts/spider-contract.mjs
-
-      - name: Verify lockfile
-        run: node scripts/check-lockfile.mjs
-
-      - name: Verify workflow constraints
-        run: node scripts/check-ci.mjs
-
-      - name: Production build
-        run: pnpm build
-
-      - name: End-to-end selftest
-        run: node scripts/ci-selftest.mjs
-
+      - name: Verify reference implementation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm typecheck
+          pnpm icon:check
+          node scripts/service-regression.mjs
+          node scripts/spider-contract.mjs
+          node scripts/check-lockfile.mjs
+          node scripts/check-ci.mjs
+          pnpm build
+          node scripts/ci-selftest.mjs
+      - name: Verify Rust implementation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo fmt --manifest-path native-rust/Cargo.toml -- --check
+          cargo check --locked --manifest-path native-rust/Cargo.toml --all-targets
+          cargo clippy --locked --manifest-path native-rust/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path native-rust/Cargo.toml --tests
+          cargo test --locked --manifest-path native-rust/Cargo.toml --no-default-features
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS/makensis.exe'
+          if (-not (Test-Path -LiteralPath $nsis)) { throw 'NSIS compiler not found' }
+          "MAKENSIS_PATH=$nsis" >> $env:GITHUB_ENV
+      - name: Package Rust Windows installer
+        run: pnpm package:rust
+      - name: Verify Rust release and generate notes
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          node scripts/release-check.mjs --rust --version $env:RELEASE_VERSION --write-checksums
+          node scripts/release-notes.mjs --rust --version $env:RELEASE_VERSION --write
       - name: Upload selftest logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -112,54 +121,15 @@ jobs:
             ${{ runner.temp }}/dev.err.log
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Package Windows installer
-        run: pnpm build:win
-
-      - name: Package lite installer
-        run: pnpm build:win:lite
-
-      - name: Verify release package
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: node scripts/release-check.mjs --version $env:RELEASE_VERSION --write-checksums
-
-      - name: Verify lite release package
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: node scripts/release-check.mjs --version $env:RELEASE_VERSION --lite --write-checksums
-
-      - name: Generate release notes
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: node scripts/release-notes.mjs --version $env:RELEASE_VERSION --write
-
-      - name: Upload workflow artifact
+      - name: Upload Rust workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CrayonShinChan-${{ steps.version.outputs.version }}
+          name: CrayonShinChan-Rust-${{ steps.version.outputs.version }}
           path: |
-            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.exe
-            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.exe.blockmap
-            release/CrayonShinChan-${{ steps.version.outputs.version }}-x64.zip
-            release/latest.yml
-            release/SHA256SUMS.txt
-            release/RELEASE_NOTES.md
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload lite workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: CrayonShinChan-lite-${{ steps.version.outputs.version }}
-          path: |
-            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.exe
-            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.exe.blockmap
-            release-lite/CrayonShinChan-${{ steps.version.outputs.version }}-x64-lite.zip
-            release-lite/SHA256SUMS-lite.txt
+            release/rust/CrayonShinChan-${{ steps.version.outputs.version }}-rust-x64.exe
+            release/rust/CrayonShinChan-${{ steps.version.outputs.version }}-rust-x64.zip
+            release/rust/SHA256SUMS-rust.txt
+            release/rust/RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 14
 
@@ -174,46 +144,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/download-artifact@v4
         with:
-          name: CrayonShinChan-${{ needs.package.outputs.version }}
+          name: CrayonShinChan-Rust-${{ needs.package.outputs.version }}
           path: release-assets
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: CrayonShinChan-lite-${{ needs.package.outputs.version }}
-          path: release-assets
-
-      - name: Create or update release draft
+      - name: Create or update Rust release draft
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.package.outputs.version }}
         run: |
           $notes = Join-Path 'release-assets' 'RELEASE_NOTES.md'
-          if (-not (Test-Path $notes)) { throw '缺少 release-assets/RELEASE_NOTES.md' }
-          $assets = @(
-            'release-assets/CrayonShinChan-*-x64.exe',
-            'release-assets/CrayonShinChan-*-x64.exe.blockmap',
-            'release-assets/CrayonShinChan-*-x64.zip',
-            'release-assets/latest.yml',
-            'release-assets/SHA256SUMS.txt',
-            'release-assets/CrayonShinChan-*-x64-lite.exe',
-            'release-assets/CrayonShinChan-*-x64-lite.exe.blockmap',
-            'release-assets/CrayonShinChan-*-x64-lite.zip',
-            'release-assets/SHA256SUMS-lite.txt'
+          if (-not (Test-Path -LiteralPath $notes)) { throw 'Missing release notes' }
+          $files = @(
+            "release-assets/CrayonShinChan-$env:RELEASE_VERSION-rust-x64.exe",
+            "release-assets/CrayonShinChan-$env:RELEASE_VERSION-rust-x64.zip",
+            'release-assets/SHA256SUMS-rust.txt'
           )
-          $files = Get-ChildItem -Path $assets -File | Select-Object -ExpandProperty FullName
-          if (-not $files) { throw '没有找到可上传的发布资产，拒绝创建空 draft' }
-          if ($files.Count -lt 9) { throw "发布资产不完整（$($files.Count)/9）：$($files -join ', ')" }
+          if (-not $files) { throw '没有找到可上传的发布资产' }
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "发布资产不完整：$file" }
+          }
           $existing = gh release view $env:RELEASE_TAG --json isDraft 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $env:RELEASE_TAG @files --verify-tag --draft --title "蜡笔小新 $env:RELEASE_TAG" --notes-file $notes
+            gh release create $env:RELEASE_TAG @files --verify-tag --draft --title "蜡笔小新 $env:RELEASE_TAG · Rust" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw 'Create draft failed' }
           } else {
             $view = $existing | ConvertFrom-Json
-            if (-not $view.isDraft) { throw '目标版本已经是正式 Release，拒绝自动覆盖。' }
-            gh release edit $env:RELEASE_TAG --draft --title "蜡笔小新 $env:RELEASE_TAG" --notes-file $notes
+            if (-not $view.isDraft) {
+              Write-Output '目标版本已经是正式 Release，拒绝自动覆盖。'
+              exit 0
+            }
+            gh release edit $env:RELEASE_TAG --draft --title "蜡笔小新 $env:RELEASE_TAG · Rust" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw 'Update draft failed' }
             gh release upload $env:RELEASE_TAG @files --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Upload draft assets failed' }
           }

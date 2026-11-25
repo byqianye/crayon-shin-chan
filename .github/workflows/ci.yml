@@ -157,3 +157,43 @@ jobs:
             ${{ runner.temp }}/dev.err.log
           if-no-files-found: ignore
           retention-days: 7
+
+  rust:
+    name: Rust desktop quality
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Prepare embedded assets and Spider
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm install --frozen-lockfile
+          pnpm spider:deps
+          pnpm spider:build
+          pnpm spider:unidbg
+          pnpm spider:runtime
+      - name: Check and test Rust
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo fmt --manifest-path native-rust/Cargo.toml -- --check
+          cargo check --locked --manifest-path native-rust/Cargo.toml --all-targets
+          cargo clippy --locked --manifest-path native-rust/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path native-rust/Cargo.toml --tests
+          cargo test --locked --manifest-path native-rust/Cargo.toml --no-default-features
+          pnpm build:rust
