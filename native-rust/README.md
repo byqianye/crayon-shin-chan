@@ -16,7 +16,7 @@ v0.1.7 将界面与业务迁移到 Rust / Dioxus，复用原版 CSS、Microsoft 
 
 详情与分类缓存有容量和有效期限制，配置改变后失效。搜索使用有界并发及取消令牌；健康记录先进入内存再合并写盘。失败保持明确错误，不把超时或解析异常转成空结果。
 
-## 加载优化（工作区实现，尚未发布）
+## 首页与分类加载优化
 
 首页原先按请求顺序收取并等待全部栏目，再一次性显示。当前实现改为有界并发、按完成顺序处理、逐栏目显示，最终保持配置顺序。单栏缓存与共享请求让切页返回和多个调用者复用已完成的内容；缺失源错误也随完整首页缓存保留。
 
@@ -44,8 +44,8 @@ scripts/build.ps1 支持 -Profile、-Target、-Run 和 -DataDir，打印实际�
 ## Windows 发布包
 
     pnpm package:rust
-    node scripts/release-check.mjs --rust --version 0.1.7 --write-checksums
-    node scripts/release-notes.mjs --rust --version 0.1.7 --write
+    node scripts/release-check.mjs --rust --version 0.1.8 --write-checksums
+    node scripts/release-notes.mjs --rust --version 0.1.8 --write
 
 打包前必须备齐 spider-host 的 out、lib、runtime、dex-tools、unidbg-libs 与 unidbg-out；构建方法见根 README。NSIS 可通过 PATH、MAKENSIS_PATH 或现有 electron-builder 缓存定位，不自动下载来历不明的工具。
 
