@@ -309,26 +309,21 @@ impl Live {
         let timeout = number(&store.settings()?["timeout"], 20.0).min(12.0);
         let outcomes: Vec<_> = stream::iter(targets.into_iter().map(|url| async move {
             let started = Instant::now();
-            let result = self.playlist(&url, timeout, None).await;
+            let result = self.media.inspect_timeout(
+                &url, Duration::from_secs_f64(timeout.clamp(1.0, 12.0)),
+                &CancellationToken::new(),
+            ).await;
             let mut result = match result {
-                Ok(text) => {
-                    let mut value = json!({"ok":true});
-                    for (field, pattern) in [
-                        ("height", r"(?i)RESOLUTION=\d+x(\d+)"),
-                        ("bandwidth", r"(?i)BANDWIDTH=(\d+)"),
-                    ] {
-                        let max = Regex::new(pattern)
-                            .expect("constant regex")
-                            .captures_iter(&text)
-                            .filter_map(|v| v[1].parse::<u64>().ok())
-                            .max();
-                        if let Some(max) = max {
-                            value[field] = json!(max);
-                        }
+                Ok(mut value) => {
+                    if matches!(s(&value, "kind").as_str(), "hls" | "dash") && value["ok"] == true && value["confidence"] != "signature" {
+                        value["ok"] = json!(false);
+                        value["errorCategory"] = json!("invalid_manifest");
+                        value["error"] = json!("没有取得有效的流媒体清单头");
                     }
+                    value["probeLevel"] = json!(if value["confidence"] == "signature" { "container" } else { "http" });
                     value
                 }
-                Err(error) => json!({"ok":false,"error":format!("{error:#}")}),
+                Err(_) => json!({"ok":false,"errorCategory":"configuration","error":"媒体探测配置读取失败","decodeVerified":false}),
             };
             result["ms"] = json!(started.elapsed().as_millis() as u64);
             result["at"] = json!(now());

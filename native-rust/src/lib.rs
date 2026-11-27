@@ -11,6 +11,7 @@ pub mod html_rules;
 pub mod http;
 pub mod live;
 pub mod media;
+pub mod media_probe;
 pub mod model;
 pub mod playback;
 pub mod player;

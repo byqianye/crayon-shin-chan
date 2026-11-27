@@ -1,6 +1,7 @@
 use crate::{
     catalogue::Catalogue,
     http::{DEFAULT_UA, header_map, match_headers},
+    media_probe::{SAMPLE_LIMIT, identify, normalized_mime},
     model::{array, merge, now, number, s},
     spider,
 };
@@ -13,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::{
@@ -25,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 pub const SAMPLE_TARGET: &str = "https://v.qq.com/x/cover/mzc00200mp8vo9b.html";
 static MEDIA: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\.(m3u8|mp4|flv|mkv|ts|mov|avi|webm|m4v|mpd|mp3|m4a)([?#]|$)")
+    Regex::new(r"(?i)\.(m3u8|mp4|flv|mkv|ts|m2ts|mts|mov|avi|webm|m4v|mpd|mp3|m4a|aac|flac|ogg|opus|wav)([?#]|$)")
         .expect("constant regex")
 });
 static NON_MEDIA: LazyLock<Regex> = LazyLock::new(|| {
@@ -253,6 +254,124 @@ impl Media {
         merge(&mut headers, &platform_headers(address));
         Ok(headers)
     }
+    pub async fn inspect(&self, address: &str, cancel: &CancellationToken) -> Result<Value> {
+        let timeout =
+            number(&self.catalogue.sources.store.settings()?["timeout"], 20.0).clamp(1.0, 8.0);
+        self.inspect_timeout(address, Duration::from_secs_f64(timeout), cancel)
+            .await
+    }
+    pub(crate) async fn inspect_timeout(
+        &self,
+        address: &str,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        let started = Instant::now();
+        let mut report = identify(address, "", &[]);
+        merge(
+            &mut report,
+            &json!({
+                "ok":false, "http":{"status":null,"contentType":"","redirected":false},
+                "sample":{"bytes":0,"limit":SAMPLE_LIMIT,"truncated":false},
+                "errorCategory":null,"error":null
+            }),
+        );
+        let invalid = match url::Url::parse(address) {
+            Err(_) => Some(("invalid_address", "媒体地址无效")),
+            Ok(url) if !matches!(url.scheme(), "http" | "https") => {
+                Some(("unsupported_protocol", "浅探测仅支持 HTTP/HTTPS"))
+            }
+            _ => None,
+        };
+        let failure = if let Some(invalid) = invalid {
+            Some(invalid)
+        } else {
+            let operation = async {
+                let range = format!("bytes=0-{}", SAMPLE_LIMIT - 1);
+                let response = self
+                    .upstream_timeout(address, Some(&range), timeout)
+                    .await?;
+                let status = response.status();
+                let final_url = response.url().to_string();
+                let content_type = response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned();
+                let length = response.content_length();
+                report["http"] = json!({
+                    "status":status.as_u16(),"contentType":normalized_mime(&content_type),
+                    "redirected":url::Url::parse(address).is_ok_and(|v| v.as_str() != final_url)
+                });
+                if !status.is_success() {
+                    merge(&mut report, &identify(&final_url, &content_type, &[]));
+                    report["errorCategory"] = json!("http_status");
+                    report["error"] = json!(format!("HTTP {}", status.as_u16()));
+                    return Ok(());
+                }
+                let mut bytes = Vec::with_capacity(SAMPLE_LIMIT);
+                let mut stopped_early = false;
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    let count = chunk.len().min(SAMPLE_LIMIT - bytes.len());
+                    bytes.extend_from_slice(&chunk[..count]);
+                    report["sample"]["bytes"] = json!(bytes.len());
+                    let found = identify(&final_url, &content_type, &bytes);
+                    if bytes.len() == SAMPLE_LIMIT
+                        || (found["confidence"] == "signature"
+                            && found["kind"] != "hls"
+                            && found["kind"] != "dash")
+                    {
+                        stopped_early = true;
+                        break;
+                    }
+                }
+                report["sample"]["truncated"] =
+                    json!(stopped_early && length.is_none_or(|v| v > bytes.len() as u64));
+                merge(&mut report, &identify(&final_url, &content_type, &bytes));
+                let (category, error) = if report["kind"] == "html" {
+                    (
+                        Some("non_media"),
+                        Some("返回的是 HTML 页面，可能是登录页或访问拦截"),
+                    )
+                } else if bytes.is_empty()
+                    || report["kind"] == "unknown"
+                    || report["confidence"] == "url"
+                {
+                    (Some("unknown_media"), Some("未取得足够的媒体内容证据"))
+                } else {
+                    (None, None)
+                };
+                report["ok"] = json!(category.is_none());
+                report["errorCategory"] = json!(category);
+                report["error"] = json!(error);
+                Ok::<_, anyhow::Error>(())
+            };
+            tokio::select! { biased;
+                _ = cancel.cancelled() => Some(("cancelled", "媒体诊断已取消")),
+                outcome = tokio::time::timeout(timeout, operation) => match outcome {
+                    Err(_) => Some(("timeout", "媒体诊断超时")),
+                    Ok(Err(error)) => {
+                        if error.chain().any(|v| v.downcast_ref::<reqwest::Error>().is_some_and(reqwest::Error::is_timeout)) {
+                            Some(("timeout", "媒体诊断超时"))
+                        } else {
+                            Some(("network", "媒体网络请求或读取失败"))
+                        }
+                    }
+                    Ok(Ok(())) => None,
+                }
+            }
+        };
+        if let Some((category, error)) = failure {
+            report["ok"] = json!(false);
+            report["errorCategory"] = json!(category);
+            report["error"] = json!(error);
+        }
+        report["ms"] = json!(started.elapsed().as_millis() as u64);
+        Ok(report)
+    }
     pub fn parses(&self) -> Result<Vec<Value>> {
         let store = &self.catalogue.sources.store;
         let stats = store.read("parse-stats", json!({}))?;
@@ -424,6 +543,15 @@ impl Media {
         result["target"] = json!(target);
         Ok(result)
     }
+    fn resolve_headers(&self, address: &str, options: &Value) -> Result<Value> {
+        let mut headers = self.headers(address)?;
+        let key = s(options, "siteKey");
+        if !key.is_empty() {
+            let site = self.catalogue.sources.site(&key)?;
+            merge(&mut headers, &site["header"]);
+        }
+        Ok(headers)
+    }
     pub async fn resolve(
         &self,
         raw: &str,
@@ -433,13 +561,7 @@ impl Media {
         let result = self.resolve_inner(raw, options, cancel).await?;
         if result["ok"] == true {
             let address = s(&result, "url");
-            let key = s(options, "siteKey");
-            let mut headers = if key.is_empty() {
-                json!({})
-            } else {
-                let site = self.catalogue.sources.site(&key)?;
-                self.catalogue.sources.headers(&site, &address)?
-            };
+            let mut headers = self.resolve_headers(&address, options)?;
             merge(&mut headers, &result["header"]);
             self.register(&address, &headers);
         }
@@ -454,6 +576,9 @@ impl Media {
         let mut address = raw.trim().to_owned();
         if address.is_empty() {
             bail!("没有播放地址");
+        }
+        if cancel.is_cancelled() {
+            bail!("请求已取消");
         }
         let started = Instant::now();
         if address.starts_with("spider://") {
@@ -482,26 +607,32 @@ impl Media {
             }
         }
         if is_direct(&address) {
-            let key = s(options, "siteKey");
-            if !key.is_empty()
-                && let Ok(site) = self.catalogue.sources.site(&key)
-            {
-                self.register(&address, &site["header"]);
-            }
             return Ok(json!({"ok":true,"url":address,"direct":true,"ms":0,"attempts":[]}));
         }
-        let referer = origin(&address)
-            .map(|v| format!("{v}/"))
-            .unwrap_or_default();
+        let mut headers = self.resolve_headers(&address, options)?;
+        if !header_map(&headers)?.contains_key(header::REFERER) {
+            headers["Referer"] = json!(
+                origin(&address)
+                    .map(|v| format!("{v}/"))
+                    .unwrap_or_default()
+            );
+        }
+        self.register(&address, &headers);
+        let probe = self.inspect(&address, cancel).await?;
+        if cancel.is_cancelled() {
+            bail!("请求已取消");
+        }
+        if probe["ok"] == true {
+            return Ok(
+                json!({"ok":true,"url":address,"direct":true,"ms":started.elapsed().as_millis() as u64,"attempts":[]}),
+            );
+        }
         let first = self
-            .walk(
-                &address,
-                json!({"Referer":referer}),
-                "直接从播放页里取",
-                true,
-                cancel,
-            )
+            .walk(&address, headers, "直接从播放页里取", true, cancel)
             .await;
+        if cancel.is_cancelled() {
+            bail!("请求已取消");
+        }
         let mut attempts = vec![first.clone()];
         if first["ok"] == true {
             return Ok(
@@ -557,6 +688,9 @@ impl Media {
                 continue;
             }
             let attempt = self.try_parse(&item, &address, cancel).await?;
+            if cancel.is_cancelled() {
+                bail!("请求已取消");
+            }
             self.record_parse(&s(&item, "url"), &attempt)?;
             attempts.push(attempt.clone());
             if attempt["ok"] == true {
@@ -601,6 +735,15 @@ impl Media {
         Ok(MediaProxy { base, cancel, task })
     }
     async fn upstream(&self, address: &str, range: Option<&str>) -> Result<reqwest::Response> {
+        self.upstream_timeout(address, range, Duration::from_secs(120))
+            .await
+    }
+    async fn upstream_timeout(
+        &self,
+        address: &str,
+        range: Option<&str>,
+        timeout: Duration,
+    ) -> Result<reqwest::Response> {
         let mut address = url::Url::parse(address).context("媒体地址无效")?;
         for _ in 0..10 {
             if !matches!(address.scheme(), "http" | "https") {
@@ -614,7 +757,7 @@ impl Media {
                 .client
                 .get(address.clone())
                 .headers(headers)
-                .timeout(Duration::from_secs(120))
+                .timeout(timeout)
                 .send()
                 .await?;
             if response.status().is_redirection() {
@@ -675,25 +818,59 @@ async fn proxy_request(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("application/octet-stream")
             .to_owned();
-        let playlist = content_type.to_lowercase().contains("mpegurl")
-            || url::Url::parse(&final_url)
-                .is_ok_and(|v| v.path().to_lowercase().ends_with(".m3u8"));
+        let detected = identify(&final_url, &content_type, &[]);
+        let mut playlist = detected["kind"] == "hls";
+        let length = response.content_length();
         let mut out = Response::builder()
             .status(status)
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                "Content-Length,Content-Range,Accept-Ranges",
+                "Content-Length,Content-Range,Accept-Ranges,X-Crayon-Media-Url",
             )
+            .header("X-Crayon-Media-Url", spider::encode(&final_url))
             .header(header::CACHE_CONTROL, "no-store");
         for key in [header::ACCEPT_RANGES, header::CONTENT_RANGE] {
             if let Some(value) = response.headers().get(&key) {
                 out = out.header(key, value);
             }
         }
+        if method == axum::http::Method::HEAD {
+            if !playlist && let Some(length) = length {
+                out = out.header(header::CONTENT_LENGTH, length);
+            }
+            return Ok(out
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::empty())?);
+        }
+        let mut chunks = response.bytes_stream();
+        let mut prefix = Vec::new();
+        if detected["kind"] == "unknown" && status.is_success() {
+            let mut sample = Vec::with_capacity(SAMPLE_LIMIT);
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk?;
+                let count = chunk.len().min(SAMPLE_LIMIT - sample.len());
+                sample.extend_from_slice(&chunk[..count]);
+                prefix.push(chunk);
+                let found = identify(&final_url, &content_type, &sample);
+                if found["kind"] == "hls" && found["confidence"] == "signature" {
+                    playlist = true;
+                    break;
+                }
+                let candidate = sample.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&sample);
+                let candidate = candidate.trim_ascii_start();
+                if sample.len() == SAMPLE_LIMIT
+                    || (!b"#EXTM3U".starts_with(candidate)
+                        && ![0xef, 0xbb, 0xbf].starts_with(&sample))
+                {
+                    break;
+                }
+            }
+        }
+        let mut chunks =
+            stream::iter(prefix.into_iter().map(Ok::<_, reqwest::Error>)).chain(chunks);
         if playlist && status.is_success() {
             let mut bytes = Vec::new();
-            let mut chunks = response.bytes_stream();
             while let Some(chunk) = chunks.next().await {
                 let chunk = chunk?;
                 if bytes.len() + chunk.len() > 5 * 1024 * 1024 {
@@ -704,22 +881,15 @@ async fn proxy_request(
             let body = rewrite_playlist(&String::from_utf8_lossy(&bytes), &final_url, &state.base);
             return Ok(out
                 .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
-                .body(if method == axum::http::Method::HEAD {
-                    Body::empty()
-                } else {
-                    Body::from(body)
-                })?);
+                .body(Body::from(body))?);
         }
-        if let Some(length) = response.content_length() {
+        if let Some(length) = length {
             out = out.header(header::CONTENT_LENGTH, length);
         }
-        Ok::<_, anyhow::Error>(out.header(header::CONTENT_TYPE, content_type).body(
-            if method == axum::http::Method::HEAD {
-                Body::empty()
-            } else {
-                Body::from_stream(response.bytes_stream())
-            },
-        )?)
+        Ok::<_, anyhow::Error>(
+            out.header(header::CONTENT_TYPE, content_type)
+                .body(Body::from_stream(chunks))?,
+        )
     }
     .await;
     match result {
