@@ -17,7 +17,7 @@ v0.1.7 将界面与业务迁移到 Rust / Dioxus，复用原版 CSS、Microsoft 
 
 详情与分类缓存有容量和有效期限制，配置改变后失效。搜索使用有界并发及取消令牌；健康记录先进入内存再合并写盘。失败保持明确错误，不把超时或解析异常转成空结果。
 
-## 媒体诊断与播放联动（未发布）
+## 媒体诊断与播放联动（v0.1.9）
 
 播放与直播页可按需检查地址。浅探测仅请求前 4KiB，限制总时长并支持取消；以内容特征优先，再看响应类型和地址后缀。报告显示识别依据、HTTP 状态、采样量和分类错误，不返回原始地址、请求头或响应正文。decodeVerified 始终为 false；探测成功只表示连通与识别，解码能力须看真实播放。
 
@@ -27,13 +27,13 @@ v0.1.7 将界面与业务迁移到 Rust / Dioxus，复用原版 CSS、Microsoft 
 
 本轮按 [Awesome 媒体目录](https://github.com/sindresorhus/awesome#media) 与 [Awesome Broadcasting](https://github.com/ebu/awesome-broadcasting) 筛选后，暂不把额外媒体工具放进播放主链。后续若确有编码排障需求，可选 [FFprobe](https://ffmpeg.org/ffprobe.html) 输出轨道 JSON，或用 [MediaInfo](https://github.com/MediaArea/MediaInfoLib) 提供技术元数据，先选其一；[Bento4](https://github.com/axiomatic-systems/Bento4) 适合开发用的 MP4/DASH 结构检查和样本制作。元数据工具不代替浏览器解码验证。现有缓存已有有效期、容量和共享请求，本轮不替换。
 
-## 本轮验证（2026-11-27，未发布）
+## 本轮验证（2026-11-27，v0.1.9）
 
 本次提交范围内，desktop 配置与关闭默认功能时均有 83 项 Rust 测试通过；两者各有 1 项需显式提供真实 mpv 的测试默认忽略。mpv 专项另行使用真实程序运行 11 项契约，全部通过，实测保存 4 秒后续播至 4.04 秒，切集从 1 秒开始，所启动进程均回收。播放器 JavaScript 桥接 10 项契约、语法检查、fmt、严格 Clippy 与 debug 桌面构建通过。
 
 真实 Rust / WebView2 窗口使用隔离数据和本机生成的 H.264/AAC 样本，MP4、HLS、FLV、MPEG-TS、DASH 均观察到实际解码出帧。无后缀 FLV 和经 302 跳转的无后缀 DASH 各解码 300 帧；DASH 从结尾跳回 3.99 秒后重新出帧，诊断正确显示 MPEG-DASH、HTTP 206 和实际采样量。内置切 mpv、进度写盘及返回内置续播完成实测；另一轮在 mpv 播放时关闭主窗口，最后 42 秒进度落盘，主进程、对应 mpv 与调试端口均退出，stderr 为空。mpv 验收使用 null 音视频输出，验证 IPC、时间与会话回收，未验证其可见窗口和扬声器输出。
 
-未覆盖全公网片源、全部编码、DRM 授权和完整长时间直播；本轮未打包或发布。新增依赖的许可收集逻辑完成独立提取与哈希核验，不把它当作安装包验收。共用 CARGO_TARGET_DIR 时，无桌面测试会覆盖 debug 同名可执行文件；启动 UI 验收前必须最后重建 desktop，避免误用无桌面产物。
+未覆盖全公网片源、全部编码、DRM 授权和完整长时间直播。上述记录为开发验收；安装包另由 verify-package.ps1 核验版本、文件清单、Spider 运行时与第三方许可。共用 CARGO_TARGET_DIR 时，无桌面测试会覆盖 debug 同名可执行文件；启动 UI 验收前必须最后重建 desktop，避免误用无桌面产物。
 
 ## 首页与分类加载优化
 
