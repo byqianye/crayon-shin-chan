@@ -232,15 +232,13 @@ fn LiveStage(
         .and_then(|v| v.as_ref().ok())
         .cloned()
         .unwrap_or_default();
-    let external = url.clone();
     let title = s(&channel, "name");
     let copied = url.clone();
     rsx! {div{class:"live-stage-wrap",
         div{class:"live-stage-head",span{class:"live-stage-name",{s(&channel,"name")}}span{class:"tag tag-outline",{s(&channel,"group")}}if lines.len()>1{span{class:"source-chips",for (i,item) in lines.iter().enumerate(){button{class:if index==i{"chip chip-source active"}else{"chip chip-source"},title:s(item,"url"),onclick:move |_|line_index.set(i),if index==i{Icon{name:"check",size:12}}if !health.read()[s(item,"url")].is_null(){span{class:if health.read()[s(item,"url")]["ok"]==true{"dot ok"}else{"dot bad"}}}{s(item,"source")}}}}}span{class:"grow"}
-            button{class:"btn btn-ghost btn-sm",disabled:url.is_empty(),onclick:move |_|{let address=external.clone();let title=title.clone();spawn(async move{ui.report(crate::player::open(&ui.backend().store,&address,&title).await);});},Icon{name:"external",size:13}"外部播放器"}
             button{class:"btn btn-ghost btn-sm",disabled:url.is_empty(),onclick:move |_|{let value=copied.clone();spawn(async move{copy(ui,&value).await;});},Icon{name:"link",size:13}"复制地址"}
         }
-        if let Some(Err(error))=result{div{class:"live-stage live-stage-msg",Icon{name:"alert",size:22}div{class:"live-stage-msg-title","换不到播放地址"}div{class:"live-stage-msg-desc","{error}"}button{class:"btn btn-ghost btn-sm",onclick:move |_|retry+=1,"重试"}}}else if url.is_empty()||picking{div{class:"live-stage live-stage-msg",span{class:"spin"}div{class:"live-stage-msg-desc",if picking{"正在挑一条能用的线路…"}else{"正在向平台换播放地址…"}}}}else{runtime::PlayerSurface{key:"{url}",address:url.clone(),live:true,class:"live-stage",onsession:move |id|session.set(id)}}
+        if let Some(Err(error))=result{div{class:"live-stage live-stage-msg",Icon{name:"alert",size:22}div{class:"live-stage-msg-title","换不到播放地址"}div{class:"live-stage-msg-desc","{error}"}button{class:"btn btn-ghost btn-sm",onclick:move |_|retry+=1,"重试"}}}else if url.is_empty()||picking{div{class:"live-stage live-stage-msg",span{class:"spin"}div{class:"live-stage-msg-desc",if picking{"正在挑一条能用的线路…"}else{"正在向平台换播放地址…"}}}}else{PlaybackStage{key:"{title}:{index}:{url}:{retry}",address:url.clone(),title,live:true,onsession:move |id|session.set(id)}}
         div{class:"player-url mono",title:url.clone(),span{class:"player-url-text",if url.is_empty(){"{raw}"}else{"{url}"}}}
     }}
 }

@@ -81,14 +81,37 @@ try {
             $taskLicenseFiles | Sort-Object FullName -Unique | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $taskDestination }
         }
     }
-    foreach ($taskName in @('artplayer', 'hls.js')) {
-        $taskPackageRoot = Join-Path $taskRoot "node_modules/$taskName"
+    $taskDependencyRootsRaw = & node -e @'
+const { createRequire } = require('node:module');
+const { dirname, join } = require('node:path');
+const fromRoot = createRequire(join(process.argv[1], 'package.json'));
+const fromMpegts = createRequire(fromRoot.resolve('mpegts.js/package.json'));
+process.stdout.write(JSON.stringify(Object.fromEntries(
+    ['es6-promise', 'events'].map((name) => [name, dirname(fromMpegts.resolve(`${name}/package.json`))])
+)));
+'@ $taskRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot locate mpegts.js dependency licenses' }
+    $taskDependencyRoots = $taskDependencyRootsRaw | ConvertFrom-Json
+    foreach ($taskName in @('artplayer', 'hls.js', 'mpegts.js', 'shaka-player', 'es6-promise', 'events')) {
+        $taskPackageRoot = if ($taskName -in @('es6-promise', 'events')) { $taskDependencyRoots.$taskName } else { Join-Path $taskRoot "node_modules/$taskName" }
         $taskPackage = Get-Content -LiteralPath (Join-Path $taskPackageRoot 'package.json') -Raw | ConvertFrom-Json
         $taskNotices.Add("JavaScript: $taskName $($taskPackage.version) | $($taskPackage.license)")
         $taskDestination = Join-Path $taskLicenses $taskName
         New-Item -ItemType Directory -Path $taskDestination | Out-Null
-        Get-ChildItem -LiteralPath $taskPackageRoot -File | Where-Object Name -Match '^(LICENSE|LICENCE|NOTICE)' |
-            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $taskDestination }
+        $taskLicenseFiles = @(Get-ChildItem -LiteralPath $taskPackageRoot -File | Where-Object Name -Match '^(LICENSE|LICENCE|NOTICE)' | Select-Object -ExpandProperty Name)
+        switch ($taskName) {
+            'mpegts.js' { $taskLicenseFiles += @('LICENSE', 'dist/mpegts.js.LICENSE.txt') }
+            'shaka-player' { $taskLicenseFiles += @('LICENSE', 'third_party/cml-cmcd/LICENSE', 'third_party/cml-cmcd/NOTICE', 'third_party/language-mapping-list/LICENSE') }
+            'es6-promise' { $taskLicenseFiles += 'LICENSE' }
+            'events' { $taskLicenseFiles += 'LICENSE' }
+        }
+        foreach ($taskRelative in ($taskLicenseFiles | Sort-Object -Unique)) {
+            $taskSource = Join-Path $taskPackageRoot $taskRelative
+            if (-not (Test-Path -LiteralPath $taskSource -PathType Leaf)) { throw "Missing JavaScript license: $taskName/$taskRelative" }
+            $taskLicensePath = Join-Path $taskDestination $taskRelative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $taskLicensePath) -Force | Out-Null
+            Copy-Item -LiteralPath $taskSource -Destination $taskLicensePath
+        }
     }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $taskJars = Get-ChildItem -LiteralPath $taskSpider -Filter *.jar -File -Recurse

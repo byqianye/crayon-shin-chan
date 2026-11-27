@@ -3,6 +3,7 @@ use crate::{
     catalogue::Catalogue,
     live::Live,
     media::{Media, MediaProxy},
+    mpv::ExternalPlayback,
     playback::Playback,
     sources::Sources,
 };
@@ -15,6 +16,8 @@ pub(super) struct Services {
     pub catalogue: Arc<Catalogue>,
     pub media: Arc<Media>,
     pub live: Arc<Live>,
+    pub external: ExternalPlayback,
+    pub shutdown: tokio_util::sync::CancellationToken,
     proxy: tokio::sync::OnceCell<MediaProxy>,
     playback: Playback,
 }
@@ -25,12 +28,15 @@ impl Services {
         let media = Arc::new(Media::new(catalogue.clone())?);
         let live = Arc::new(Live::new(media.clone()));
         let playback = Playback::new(store.clone());
+        let external = ExternalPlayback::new(store.clone());
         Ok(Self {
             store,
             sources,
             catalogue,
             media,
             live,
+            external,
+            shutdown: tokio_util::sync::CancellationToken::new(),
             proxy: tokio::sync::OnceCell::new(),
             playback,
         })
@@ -49,15 +55,41 @@ impl Services {
             );
         }
     }
+    pub async fn suspend_player(
+        &self,
+        session: &str,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<()> {
+        let snapshot = document::eval(&format!(
+            "(window.__crayonSuspendedSessions??=new Set()).add({0});const art=window.__crayonPlayers?.get({0});if(!art)return null;art.pause();return {{session:{0},event:'pause',position:art.currentTime,duration:art.duration,capturing:!!art.__capture}};",
+            json!(session)
+        ));
+        let event = timeout(Duration::from_secs(2), snapshot.join::<Value>()).await??;
+        if cancel.is_cancelled() {
+            anyhow::bail!("播放页面已切换");
+        }
+        if !event.is_null() {
+            self.playback.event(&event, now())?;
+        }
+        self.playback.finish()
+    }
 }
 
 pub(super) fn install(mut ui: Ui) {
     use_future(move || async move {
-        let libraries = format!(
-            "if(!window.Artplayer){{const el=document.createElement('script');el.textContent={};document.head.append(el);}}if(!window.Hls){{const el=document.createElement('script');el.textContent={};document.head.append(el);}}",
-            json!(ARTPLAYER),
-            json!(HLS)
-        );
+        let mut libraries = String::new();
+        for (global, source) in [
+            ("Artplayer", ARTPLAYER),
+            ("Hls", HLS),
+            ("mpegts", MPEGTS),
+            ("shaka", SHAKA),
+            ("__crayonCreatePlayer", PLAYER_ADAPTERS),
+        ] {
+            libraries.push_str(&format!(
+                "if(!window[{0}]){{const el=document.createElement('script');el.textContent={1};document.head.append(el);}}",
+                json!(global), json!(source)
+            ));
+        }
         let mut events = document::eval(&format!(
             "window.__crayonSend=(v)=>dioxus.send(v);window.__crayonPlayers??=new Map();{libraries};await new Promise(()=>{{}});"
         ));
@@ -104,6 +136,25 @@ pub(super) fn install(mut ui: Ui) {
             }
         }
     });
+    use_future(move || async move {
+        let svc = ui.backend();
+        let mut updates = svc.external.subscribe();
+        let mut previous = Value::Null;
+        loop {
+            let status = updates.borrow_and_update().clone();
+            if status["savedAt"] != previous["savedAt"]
+                || status["session"] != previous["session"]
+                || status["state"] != previous["state"]
+            {
+                ui.refresh_library();
+            }
+            ui.external_player.set(status.clone());
+            previous = status;
+            if updates.changed().await.is_err() {
+                break;
+            }
+        }
+    });
     let desktop = dioxus::desktop::use_window();
     let close_svc = ui.backend();
     let close_window = desktop.clone();
@@ -122,6 +173,7 @@ pub(super) fn install(mut ui: Ui) {
                 return;
             }
             let svc = close_svc.clone();
+            svc.shutdown.cancel();
             let window = close_window.clone();
             spawn(async move {
                 let snapshot = document::eval(
@@ -140,6 +192,9 @@ pub(super) fn install(mut ui: Ui) {
                 }
                 if let Err(error) = svc.playback.finish() {
                     eprintln!("[history] 保存最近进度失败：{error:#}");
+                }
+                if let Err(error) = svc.external.finish().await {
+                    eprintln!("[mpv] 退出保存失败：{error:#}");
                 }
                 let size = window.inner_size().to_logical::<f64>(window.scale_factor());
                 if let Err(error) = svc
@@ -161,6 +216,7 @@ pub(super) fn install(mut ui: Ui) {
 #[component]
 pub(super) fn PlayerSurface(
     address: String,
+    #[props(default)] kind: String,
     #[props(default)] live: bool,
     #[props(default)] entry: Value,
     #[props(default)] class: String,
@@ -170,25 +226,38 @@ pub(super) fn PlayerSurface(
     let session = use_hook(|| uuid::Uuid::new_v4().to_string());
     let id = format!("player-{session}");
     let cleanup = session.clone();
+    let cancel = use_hook(move || ui.backend().shutdown.child_token());
+    let stop = cancel.clone();
     use_drop(move || {
+        stop.cancel();
         let _ = document::eval(&format!(
-            "{{const art=window.__crayonPlayers?.get({0});if(art){{art.__emit?.('destroy');art.destroy(false);window.__crayonPlayers.delete({0});}}}}",
+            "{{const art=window.__crayonPlayers?.get({0});if(art)art.destroy(false);window.__crayonSuspendedSessions?.delete({0});}}",
             json!(cleanup)
         ));
     });
     let raw = address.clone();
     let session2 = session.clone();
     rsx! { div { id: "{id}", class: "{class}", onmounted: move |_| {
-        let address = raw.clone(); let entry = entry.clone(); let session = session2.clone(); let id = id.clone();
+        let address = raw.clone(); let entry = entry.clone(); let session = session2.clone(); let id = id.clone(); let kind = kind.clone(); let cancel = cancel.clone();
         onsession.call(session.clone());
         spawn(async move {
             let svc = ui.backend();
+            if cancel.is_cancelled() { return; }
+            if ui.report(svc.external.finish().await).is_none() { return; }
+            if cancel.is_cancelled() { return; }
             if ui.report(svc.playback.attach(&session, entry)).is_none() { return; }
+            let mut kind = if kind.is_empty() || kind == "unknown" { crate::media_probe::kind_from_url(&address).to_owned() } else { kind };
+            if kind == "unknown"
+                && let Ok(probe) = svc.media.inspect(&address, &cancel).await {
+                kind = s(&probe, "kind");
+            }
+            if cancel.is_cancelled() { return; }
             let proxy = match svc.playable(&address).await {
                 Ok(value) => value,
                 Err(error) => { ui.player_event.set(json!({"session":session,"event":"error","at":now(),"error":error.to_string()})); ui.notify(format!("{error:#}"), "danger"); return; }
             };
-            let config = json!({"session":session,"id":id,"url":proxy,"hls":crate::media::is_hls(&address),"live":live,"accent":ui.settings.peek()["accent"]});
+            if cancel.is_cancelled() { return; }
+            let config = json!({"session":session,"id":id,"url":proxy,"sourceUrl":address,"kind":kind,"live":live,"accent":ui.settings.peek()["accent"]});
             let mut eval = document::eval(PLAYER_BRIDGE);
             if let Err(error) = eval.send(config) { ui.notify(format!("播放器初始化失败：{error}"), "danger"); return; }
             match eval.recv::<Value>().await {
@@ -203,19 +272,7 @@ pub(super) fn PlayerSurface(
 const PLAYER_BRIDGE: &str = r#"
 const cfg=await dioxus.recv();
 try {
-  const el=document.getElementById(cfg.id);if(!el)throw new Error('找不到播放器容器');el.innerHTML='';
-  let art;
-  const emit=(event,extra={},instance=art)=>window.__crayonSend?.({session:cfg.session,event,position:instance?.currentTime||0,duration:Number.isFinite(instance?.duration)?instance.duration:0,capturing:!!instance?.__capture,...extra});
-  const custom=(video,url,instance)=>{
-    if(Hls.isSupported()){
-      const hls=new Hls({maxBufferLength:30,manifestLoadingTimeOut:15000,abrEwmaDefaultEstimate:4000000,manifestLoadingMaxRetry:3,levelLoadingMaxRetry:4,fragLoadingMaxRetry:4});instance.hls=hls;
-      hls.on(Hls.Events.MANIFEST_PARSED,(_,data)=>emit('levels',{levels:data.levels.map(v=>({height:v.height,bitrate:v.bitrate}))},instance));
-      hls.on(Hls.Events.ERROR,(_,data)=>emit('hlsError',{fatal:data.fatal,errorType:data.type,error:data.details},instance));instance.on('destroy',()=>hls.destroy());hls.loadSource(url);hls.attachMedia(video);
-    }else if(video.canPlayType('application/vnd.apple.mpegurl'))video.src=url;else emit('error',{error:'当前环境不支持 HLS 播放'},instance);
-  };
-  art=new Artplayer({container:el,url:cfg.url,isLive:cfg.live,...(cfg.hls?{type:'m3u8',customType:{m3u8:custom}}:{}),autoplay:true,volume:0.8,pip:true,fullscreen:true,fullscreenWeb:true,setting:true,hotkey:true,playbackRate:!cfg.live,aspectRatio:true,miniProgressBar:true,airplay:true,theme:cfg.accent||'#2563EB',lang:'zh-CN',moreVideoAttr:{crossOrigin:'anonymous'}});
-  art.__emit=emit;window.__crayonPlayers.set(cfg.session,art);
-  for(const event of ['loadedmetadata','durationchange','canplay','playing','timeupdate','pause','ended','error'])art.on('video:'+event,()=>emit(event,event==='error'?{error:art.video.error?.message||'视频加载失败'}:{}));
+  if(document.getElementById(cfg.id)&&!window.__crayonSuspendedSessions?.has(cfg.session))window.__crayonCreatePlayer(cfg);
   dioxus.send({ok:true});
-}catch(error){dioxus.send({ok:false,error:String(error.message||error)});}
+}catch{dioxus.send({ok:false,error:'播放器初始化失败，请重试或使用外部播放器'});}
 "#;

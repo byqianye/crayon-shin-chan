@@ -13,12 +13,14 @@ use std::sync::Arc;
 mod detail_player;
 mod home_search;
 mod live_library;
+mod media_controls;
 mod runtime;
 mod sites_settings;
 mod widgets;
 use detail_player::*;
 use home_search::*;
 use live_library::*;
+use media_controls::*;
 use runtime::Services;
 use sites_settings::*;
 use widgets::*;
@@ -27,6 +29,9 @@ const GLOBAL: &str = include_str!("../../src/renderer/src/styles/global.css");
 const PAGES: &str = include_str!("../../src/renderer/src/styles/pages.css");
 const ARTPLAYER: &str = include_str!("../../node_modules/artplayer/dist/artplayer.js");
 const HLS: &str = include_str!("../../node_modules/hls.js/dist/hls.min.js");
+const MPEGTS: &str = include_str!("../../node_modules/mpegts.js/dist/mpegts.js");
+const SHAKA: &str = include_str!("../../node_modules/shaka-player/dist/shaka-player.compiled.js");
+const PLAYER_ADAPTERS: &str = include_str!("ui/player_bridge.js");
 const ICON: &[u8] = include_bytes!("../../build/icon.png");
 
 #[derive(Clone, PartialEq, Debug)]
@@ -62,6 +67,7 @@ struct Ui {
     ready: Signal<bool>,
     revision: Signal<u64>,
     player_event: Signal<Value>,
+    external_player: Signal<Value>,
 }
 impl Ui {
     fn backend(self) -> Arc<Services> {
@@ -225,6 +231,7 @@ fn App() -> Element {
         ready: use_signal(|| false),
         revision: use_signal(|| 0),
         player_event: use_signal(|| json!({})),
+        external_player: use_signal(|| json!({})),
     };
     use_context_provider(|| ui);
     use_future(move || async move {

@@ -62,6 +62,8 @@ GNU 构建必须让 WebView2Loader.dll 与 crayon-rust.exe 保持同级。免安
 
 首次启动会添加内置公开采集订阅和肥猫订阅并尝试同步。同步失败保留上次缓存；删除或停用后不自动恢复。第三方 Spider 默认关闭，需确认来源后在「影视源」页启用。包中不包含用户的设置、API Key、收藏或观看记录。
 
+当前源码另有未发布的媒体诊断、mpv 进度与续播联动、FLV/TS/DASH 适配；现有缓存保持不变。能力与验收边界见 [Rust 文档](native-rust/README.md#媒体诊断与播放联动未发布)，已发布安装包尚不包含这些改动。
+
 ## Spider 与支持边界
 
 带 spider 文件的 csp_* jar/dex 站点通过随包 Java 宿主运行。宿主支持首页、分类、搜索、详情、播放、取消与重启，影视源页提供运行时检查、缓存清理和错误分类。
@@ -92,7 +94,8 @@ Spider jar 是第三方可执行代码。JVM 会过滤敏感环境变量并使�
 | pnpm dev | 编译并启动 Rust 桌面版 |
 | pnpm build:rust | 编译 Rust release，GNU 版同时复制 WebView2 加载器 |
 | pnpm build:win / pnpm package:rust | 生成 Rust 完整版安装包、ZIP、许可与 SHA256 清单 |
-| cargo test --locked --manifest-path native-rust/Cargo.toml --tests | 48 项 Rust 契约回归，包含真实 Java 宿主 |
+| cargo test --locked --manifest-path native-rust/Cargo.toml --tests | Rust 契约回归，包含真实 Java 宿主 |
+| node scripts/player-bridge-contract.mjs | HLS、FLV/TS、DASH 适配与资源释放契约 |
 | cargo test --locked --manifest-path native-rust/Cargo.toml --no-default-features | 无桌面功能的核心服务回归 |
 | cargo clippy --locked --manifest-path native-rust/Cargo.toml --all-targets -- -D warnings | 严格 Rust 静态检查 |
 | node scripts/service-regression.mjs | 原 TypeScript 服务对照回归 |

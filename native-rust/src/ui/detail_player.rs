@@ -127,6 +127,7 @@ pub(super) fn Player(
     ep_index: usize,
 ) -> Element {
     let ui = use_context::<Ui>();
+    let episode_key = format!("{site_key}:{vod_id}:{line_index}:{ep_index}");
     let detail = use_resource(move || {
         let key = site_key.clone();
         let id = vod_id.clone();
@@ -142,7 +143,9 @@ pub(super) fn Player(
     match result {
         None => rsx! {div{class:"page",Loading{text:"正在加载影片信息…"}}},
         Some(Err(error)) => rsx! {div{class:"page",Empty{title:"无法加载影片",desc:error}}},
-        Some(Ok(detail)) => rsx! {EpisodePlayer{detail,line_index,ep_index}},
+        Some(Ok(detail)) => {
+            rsx! {EpisodePlayer{key:"{episode_key}",detail,line_index,ep_index}}
+        }
     }
 }
 #[component]
@@ -212,7 +215,6 @@ fn EpisodePlayer(detail: Value, line_index: usize, ep_index: usize) -> Element {
         ep_index + 1,
     );
     let alternatives = sources_for(ui, &detail);
-    let external = address.clone();
     let clipboard = address.clone();
     let browser = if address.is_empty() {
         raw.clone()
@@ -220,17 +222,10 @@ fn EpisodePlayer(detail: Value, line_index: usize, ep_index: usize) -> Element {
         address.clone()
     };
     let title = format!("{} {}", s(&detail, "vod_name"), s(&episode, "name"));
-    let last = ui.player_event.read().clone();
-    let video_error = !session.read().is_empty()
-        && s(&last, "session") == *session.read()
-        && (s(&last, "event") == "error"
-            || (s(&last, "event") == "hlsError"
-                && last["fatal"] == true
-                && last["recovered"] != true));
     rsx! {div{class:"page page-player",div{class:"detail-head",button{class:"btn btn-sm",onclick:move|_|ui.go(back.clone()),Icon{name:"chevron-left",size:14}"返回"}span{class:"detail-title-inline",{s(&detail,"vod_name")}}span{class:"text-3 fs-12",{s(&line,"name")}" · "{s(&episode,"name")}}}
-        div{class:"player-layout",div{class:"player-main",div{class:"player-stage",if !address.is_empty(){runtime::PlayerSurface{key:"{address}",address:address.clone(),class:"player-stage-inner",entry,onsession:move |id|session.set(id)}}if result.is_none(){div{class:"player-stage-note",span{class:"spin"}"这条线路给的不是直链，正在换播放地址…"}}}
-            if !error.is_empty(){div{class:"banner banner-danger","{error}" button{class:"btn btn-sm",onclick:move|_|retry+=1,"重试"}}}else if video_error{div{class:"banner banner-danger","视频加载失败，可能是地址已失效或浏览器不支持。请换线路或使用外部播放器。"}}
-            div{class:"player-bar",button{class:"btn btn-sm",disabled:ep_index==0,onclick:move|_|ui.go(prev.clone()),Icon{name:"chevron-left",size:13}"上一集"}button{class:"btn btn-sm",disabled:ep_index+1>=episodes.len(),onclick:move|_|ui.go(next.clone()),"下一集" Icon{name:"chevron-right",size:13}}span{class:"grow"}button{class:"btn btn-sm",disabled:external.is_empty(),onclick:move|_|{let address=external.clone();let title=title.clone();spawn(async move{if ui.report(crate::player::open(&ui.backend().store,&address,&title).await).is_some(){ui.notify("已交给外部播放器","success");}});},Icon{name:"external",size:13}"外部播放器"}button{class:"btn btn-sm",disabled:clipboard.is_empty(),onclick:move|_|{let text=clipboard.clone();spawn(async move{copy(ui,&text).await;});},Icon{name:"link",size:13}"复制地址"}}
+        div{class:"player-layout",div{class:"player-main",if !address.is_empty(){PlaybackStage{key:"{address}:{retry}",address:address.clone(),title,entry,onsession:move |id|session.set(id)}}else{div{class:"player-stage",if result.is_none(){div{class:"player-stage-note",span{class:"spin"}"这条线路给的不是直链，正在换播放地址…"}}}}
+            if !error.is_empty(){div{class:"banner banner-danger","{error}" button{class:"btn btn-sm",onclick:move|_|retry+=1,"重试"}}}
+            div{class:"player-bar",button{class:"btn btn-sm",disabled:ep_index==0,onclick:move|_|ui.go(prev.clone()),Icon{name:"chevron-left",size:13}"上一集"}button{class:"btn btn-sm",disabled:ep_index+1>=episodes.len(),onclick:move|_|ui.go(next.clone()),"下一集" Icon{name:"chevron-right",size:13}}span{class:"grow"}button{class:"btn btn-sm",disabled:clipboard.is_empty(),onclick:move|_|{let text=clipboard.clone();spawn(async move{copy(ui,&text).await;});},Icon{name:"link",size:13}"复制地址"}}
             button{class:"player-url mono",title:browser.clone(),onclick:move|_|{ui.report(opener::open(&browser).map_err(anyhow::Error::from));},span{class:"player-url-text","{raw}"}span{class:"player-url-go",Icon{name:"external",size:12}"浏览器打开"}}
             AiSummary{input}
         }aside{class:"player-side",div{class:"player-side-head",Poster{src:s(&detail,"vod_pic"),name:s(&detail,"vod_name"),class:"poster-side"}div{div{class:"player-side-title",{s(&detail,"vod_name")}}div{class:"text-3 fs-12",{s(&line,"name")}}div{class:"text-3 fs-12","第 {ep_index+1} / {episodes.len()} 集"}}}
