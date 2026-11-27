@@ -13,6 +13,7 @@ pub mod live;
 pub mod media;
 pub mod media_probe;
 pub mod model;
+pub mod mpv;
 pub mod playback;
 pub mod player;
 pub mod presets;

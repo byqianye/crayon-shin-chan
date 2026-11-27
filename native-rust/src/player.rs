@@ -211,7 +211,20 @@ pub async fn detect(store: &Store) -> Result<Vec<Value>> {
     }
     Ok(found)
 }
-pub async fn open(store: &Store, address: &str, title: &str) -> Result<Value> {
+pub struct Launch {
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+impl Launch {
+    pub fn is_mpv(&self) -> bool {
+        Path::new(&self.command)
+            .file_stem()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("mpv"))
+    }
+}
+
+pub async fn resolve(store: &Store, address: &str, title: &str) -> Result<Launch> {
     let settings = store.settings()?;
     let manual = s(&settings["externalPlayer"], "command");
     let command = if manual.is_empty() {
@@ -227,16 +240,24 @@ pub async fn open(store: &Store, address: &str, title: &str) -> Result<Value> {
         manual
     };
     let args = arguments(&array(&settings["externalPlayer"]["args"]), address, title)?;
-    let mut child = tokio::process::Command::new(&command);
+    Ok(Launch { command, args })
+}
+
+pub fn launch(spec: &Launch) -> Result<Value> {
+    let mut child = tokio::process::Command::new(&spec.command);
     child
-        .args(&args)
+        .args(&spec.args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     #[cfg(windows)]
     child.creation_flags(0x00000008);
     child.spawn().context("无法启动外部播放器")?;
-    Ok(json!({"player":command,"args":args}))
+    Ok(json!({"player":spec.command,"args":spec.args}))
+}
+
+pub async fn open(store: &Store, address: &str, title: &str) -> Result<Value> {
+    launch(&resolve(store, address, title).await?)
 }
 pub fn open_path(path: &Path) -> Result<()> {
     opener::open(path).context("无法打开目录")
