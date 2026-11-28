@@ -78,7 +78,9 @@ dex2jar 在转换开始时就可能生成 22 字节的空 ZIP，不能以文件�
 
 离线网站与接入契约共 27 项，覆盖两种播放地址编码、前台检查复用、分类与搜索、详情缓存、窗口分页、取消与响应体超时、伪装媒体错误页及跨域凭据边界。公网检查默认忽略，需要显式运行；不得将 Animoe 的 blocked 输出计作真实播放通过。
 
-以下为 2026-11-28 开发阶段检查快照，不等同于本次 v0.1.10 发布验收。desktop 配置下选定的 lib、网站、Catalogue、Media、媒体探测与播放回归共 76 项通过；关闭默认功能的网站契约 27 项通过。`cargo check --all-targets`、严格 Clippy 与本次涉及文件的 rustfmt 检查通过。全仓 fmt 检查仍在原有 `src/ui.rs` 改动处报告排版差异；本轮保留该既有改动。Spider 生命周期单测需显式指定含 `out/host/SpiderHost.class` 的现有宿主根目录，项目当前 `spider-host/out` 不存在；本轮未运行依赖 javac/jar 的完整 Spider 集成组。最终发布验收应以主线程本次运行记录为准。
+2026-11-28 开发阶段曾完成 desktop 配置下选定的 lib、网站、Catalogue、Media、媒体探测与播放回归共 76 项，以及关闭默认功能的网站契约 27 项；该快照早于最后的缓存边界与重定向修复，不能代替发布验收。
+
+发布前本机检查：全仓 Rust 源码与测试的 rustfmt、`cargo metadata --locked`、TypeScript 类型、图标、锁文件与 CI 约束检查通过；Electron 参考构建、自检 185/185、服务回归及 Spider 契约 10/10 通过。Spider 宿主由项目脚本和 JDK 17 生成。本机 Rust 契约编译在依赖阶段因缺少 MSVC `link.exe` 失败，测试未执行；最终 Rust 编译、Clippy、完整契约和安装包校验由 Windows Release 工作流执行，以对应提交的成功记录为准。
 
 ```powershell
 cargo test --locked --manifest-path native-rust/Cargo.toml --no-default-features --test animoe_contract --test kankanya_contract --test website_sources_contract --test website_dispatch_contract

@@ -117,12 +117,10 @@ impl Ui {
         if matches!(
             page,
             Page::Detail(_, _) | Page::Player(_, _, _, _) | Page::PlayerByEpisodeName(_, _, _, _)
-        )
-            && !matches!(
-                *self.page.peek(),
-                Page::Detail(_, _) | Page::Player(_, _, _, _) | Page::PlayerByEpisodeName(_, _, _, _)
-            )
-        {
+        ) && !matches!(
+            *self.page.peek(),
+            Page::Detail(_, _) | Page::Player(_, _, _, _) | Page::PlayerByEpisodeName(_, _, _, _)
+        ) {
             self.origin.set(self.page.peek().clone());
         }
         if let Page::Search(keyword) = &page {

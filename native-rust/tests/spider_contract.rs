@@ -311,7 +311,10 @@ async fn dex_conversion_preserves_existing_jvm_cache_for_a_different_class() {
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "jar"))
         .collect::<Vec<_>>();
-    let cache_info = spider.cache_info(&[site.clone(), old_site.clone()]).await.unwrap();
+    let cache_info = spider
+        .cache_info(&[site.clone(), old_site.clone()])
+        .await
+        .unwrap();
     let reported_bytes = cache_info["sites"][0]["bytes"].as_u64().unwrap();
     let actual_bytes = std::fs::read_dir(&cache)
         .unwrap()
@@ -322,9 +325,19 @@ async fn dex_conversion_preserves_existing_jvm_cache_for_a_different_class() {
 
     assert_eq!(old_home.unwrap()["list"][0]["vod_id"], "fixture");
     assert_eq!(new_home.unwrap()["list"][0]["vod_id"], "fixture");
-    assert_eq!(shared_after, old_bytes, "conversion must keep the shared JAR immutable");
-    assert_eq!(updated_jars.len(), 2, "the converted class needs its own cache artifact");
-    assert_eq!(reported_bytes, actual_bytes, "cache accounting must include class-specific JARs");
+    assert_eq!(
+        shared_after, old_bytes,
+        "conversion must keep the shared JAR immutable"
+    );
+    assert_eq!(
+        updated_jars.len(),
+        2,
+        "the converted class needs its own cache artifact"
+    );
+    assert_eq!(
+        reported_bytes, actual_bytes,
+        "cache accounting must include class-specific JARs"
+    );
     assert_eq!(old_again.unwrap()["list"][0]["vod_id"], "fixture");
 }
 
