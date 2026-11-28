@@ -561,7 +561,15 @@ impl Media {
         let result = self.resolve_inner(raw, options, cancel).await?;
         if result["ok"] == true {
             let address = s(&result, "url");
-            let mut headers = self.resolve_headers(&address, options)?;
+            let key = s(options, "siteKey");
+            // Website adapters already scope credentials to the media destination.
+            let mut headers = if !key.is_empty()
+                && crate::websites::supported(&self.catalogue.sources.site(&key)?)
+            {
+                json!({})
+            } else {
+                self.resolve_headers(&address, options)?
+            };
             merge(&mut headers, &result["header"]);
             self.register(&address, &headers);
         }
@@ -603,6 +611,22 @@ impl Media {
                 self.register(&address, &payload["header"]);
                 return Ok(
                     json!({"ok":true,"url":address,"direct":false,"parseName":"Spider","header":payload["header"],"ms":started.elapsed().as_millis() as u64,"attempts":[]}),
+                );
+            }
+        }
+        let key = s(options, "siteKey");
+        if !key.is_empty() {
+            let site = self.catalogue.sources.site(&key)?;
+            if crate::websites::supported(&site) {
+                let resolved =
+                    crate::websites::resolve(&self.catalogue.sources, &site, &address, cancel)
+                        .await?;
+                let address = s(&resolved, "url");
+                if !crate::http::is_http_url(&address) {
+                    bail!("网站没有返回可用的媒体地址");
+                }
+                return Ok(
+                    json!({"ok":true,"url":address,"direct":false,"parseName":site["name"],"header":resolved["header"],"ms":started.elapsed().as_millis() as u64,"attempts":[]}),
                 );
             }
         }

@@ -1,0 +1,30 @@
+{
+  "format": "tvbox-desktop/1",
+  "name": "看看鸭与 Animoe",
+  "sites": [
+    {
+      "key": "kankanya",
+      "name": "看看鸭",
+      "type": 4,
+      "api": "https://www.kankanya.pro/",
+      "searchable": 1,
+      "timeout": 15
+    },
+    {
+      "key": "animoe",
+      "name": "Animoe 动漫",
+      "type": 4,
+      "api": "https://animoe.org/",
+      "searchable": 1,
+      "timeout": 15
+    }
+  ],
+  "tvboxDesktop": {
+    "home": {
+      "sections": [
+        { "title": "看看鸭 · 最近更新", "site": "kankanya" },
+        { "title": "Animoe · 动漫", "site": "animoe" }
+      ]
+    }
+  }
+}

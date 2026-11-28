@@ -88,14 +88,19 @@ impl Catalogue {
         let token = cancel.cloned().unwrap_or_default();
         let this = self.clone();
         let pending_key = format!("cms:{identity}:{address}");
+        let site = site.clone();
         let operation = async move {
-            let payload = cms::parse_payload(
-                &this
-                    .sources
-                    .net
-                    .text(&address, &headers, timeout, &token)
-                    .await?,
-            )?;
+            let payload = if crate::websites::supported(&site) {
+                crate::websites::request(&this.sources, &site, &query, &token).await?
+            } else {
+                cms::parse_payload(
+                    &this
+                        .sources
+                        .net
+                        .text(&address, &headers, timeout, &token)
+                        .await?,
+                )?
+            };
             if revision == this.sources.revision() && cms::is_ok(&payload) {
                 for raw in array(&payload["list"]) {
                     let id = raw
