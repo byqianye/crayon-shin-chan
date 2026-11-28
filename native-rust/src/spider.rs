@@ -783,7 +783,8 @@ impl Spider {
 async fn file_sha256(path: &Path) -> Result<String> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut digest = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
+    // 缓冲区跨 await 存活，放在堆上以免放大目录调用链的 future 栈帧。
+    let mut buffer = vec![0; 64 * 1024];
     loop {
         let count = file.read(&mut buffer).await?;
         if count == 0 {
@@ -985,6 +986,13 @@ pub fn classify_failure(message: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hashing_future_does_not_inline_the_read_buffer() {
+        let request = file_sha256(Path::new("unused-fixture.jar"));
+        let size = std::mem::size_of_val(&request);
+        assert!(size < 4096, "hashing future inline size is {size} bytes");
+    }
 
     #[test]
     fn conversion_child_fixture() {

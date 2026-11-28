@@ -26,6 +26,36 @@ fn website_dispatch_futures_fit_nested_catalogue_calls() {
 }
 
 #[test]
+fn catalogue_futures_do_not_inline_spider_hash_buffers() {
+    fn future_size<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+
+    let folder = tempfile::tempdir().unwrap();
+    let sources = Arc::new(Sources::new(Arc::new(Store::open(folder.path()).unwrap())).unwrap());
+    let catalogue = Arc::new(Catalogue::new(sources));
+    let site = json!({"api":"https://animoe.org/","type":4});
+    let cancel = CancellationToken::new();
+    for (name, size) in [
+        (
+            "spider",
+            future_size(|| {
+                catalogue
+                    .spider
+                    .call(&site, "home", json!({}), 20.0, &cancel)
+            }),
+        ),
+        ("classes", future_size(|| catalogue.classes(&site))),
+        ("home", future_size(|| catalogue.home(false))),
+    ] {
+        assert!(
+            size < 64 * 1024,
+            "{name} future inline size is {size} bytes"
+        );
+    }
+}
+
+#[test]
 fn website_dispatch_requires_exact_hosts_and_root_apis() {
     use crayon_core::websites::{handles_address, supported};
     for api in [
