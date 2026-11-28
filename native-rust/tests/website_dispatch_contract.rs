@@ -45,7 +45,7 @@ impl Fixture {
                 async move {
                     requests.lock().unwrap().push((uri.to_string(),headers.clone()));
                     if uri.path() == "/media/redirect.m3u8" {
-                        return Redirect::temporary(&format!("{media_base}/media/good.m3u8")).into_response();
+                        return Redirect::temporary(&format!("{}/media/good.m3u8", media_base.replace("127.0.0.1", "localhost"))).into_response();
                     }
                     let (status,mime,body) = match uri.path() {
                         "/" if uri.query().is_none() => (StatusCode::OK,"text/html",r#"<html><a href="/type/20.html" title="连载中">连载中</a><a href="/info/264.html" title="地狱乐"><img data-original="/cover.jpg"></a></html>"#.to_owned()),
@@ -58,8 +58,7 @@ impl Fixture {
                         "/info/264.html" => (StatusCode::OK,"text/html",r#"<html><h1>地狱乐</h1><meta name="description" content="集成测试简介"><div class="module-tab-item" data-dropdown-value="字幕组"></div><div class="module-play-list"><a href="/play/264-1-1.html">第1集</a><a href="/play/264-1-2.html">第2集</a></div></html>"#.to_owned()),
                         "/play/264-1-1.html" | "/play/264-1-2.html" | "/play/264-1-3.html" => {
                             let media = if uri.path().ends_with("1-2.html") {"error"} else if uri.path().ends_with("1-3.html") {"redirect"} else {"good"};
-                            let media_root = if media == "redirect" {format!("http://{}",headers["host"].to_str().unwrap())} else {media_base.clone()};
-                            (StatusCode::OK,"text/html",format!("<html><script>var player_aaaa = {};</script></html>",json!({"url":format!("{media_root}/media/{media}.m3u8")})))
+                            (StatusCode::OK,"text/html",format!("<html><script>var player_aaaa = {};</script></html>",json!({"url":format!("{media_base}/media/{media}.m3u8")})))
                         },
                         "/media/good.m3u8" => (StatusCode::OK,"application/vnd.apple.mpegurl","#EXTM3U\n#EXT-X-TARGETDURATION:8\n#EXTINF:8,\nsegment.ts\n#EXT-X-ENDLIST\n".to_owned()),
                         "/media/error.m3u8" => (StatusCode::OK,"application/vnd.apple.mpegurl","<html><title>Access denied</title></html>".to_owned()),
@@ -257,42 +256,31 @@ async fn website_episodes_cannot_fall_through_to_generic_external_resolution() {
 }
 
 #[tokio::test]
-async fn media_redirect_recomputes_credentials_before_playback_registration() {
+async fn top_level_media_resolution_rejects_cross_origin_redirects() {
     let fixture = Fixture::new().await;
     let media = Media::new(fixture.catalogue.clone()).unwrap();
     let cancel = CancellationToken::new();
-    let resolved = media
+    let error = media
         .resolve(
             &format!("{}play/264-1-3.html", fixture.base),
             &json!({"siteKey":"animoe"}),
             &cancel,
         )
         .await
-        .unwrap();
-    let address = s(&resolved, "url");
-    assert_eq!(address, format!("{}/media/good.m3u8", fixture.media_base));
-    assert_eq!(resolved["header"]["Cookie"], "media=1");
-    assert_eq!(resolved["header"]["Authorization"], "Bearer media-fixture");
-    assert_eq!(media.inspect(&address, &cancel).await.unwrap()["ok"], true);
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Animoe 媒体重定向目标必须属于 Animoe 源"),
+        "{error:#}"
+    );
+    assert_eq!(fixture.calls("/media/redirect.m3u8"), 1);
+    assert_eq!(fixture.calls("/media/good.m3u8"), 0);
     let requests = fixture.requests.lock().unwrap();
     let initial = requests
         .iter()
         .find(|(path, _)| path == "/media/redirect.m3u8")
         .unwrap();
-    assert_eq!(initial.1["cookie"], "site=1");
-    let external: Vec<_> = requests
-        .iter()
-        .filter(|(path, _)| path == "/media/good.m3u8")
-        .collect();
-    assert_eq!(external.len(), 2);
-    for (_, header) in &external {
-        assert!(header.get("cookie").is_none_or(|value| value != "site=1"));
-        assert!(
-            header
-                .get("authorization")
-                .is_none_or(|value| value != "Bearer site-fixture")
-        );
-    }
-    assert_eq!(external[1].1["cookie"], "media=1");
-    assert_eq!(external[1].1["authorization"], "Bearer media-fixture");
+    assert_eq!(initial.1["cookie"], "media=1");
+    assert_eq!(initial.1["authorization"], "Bearer media-fixture");
 }
