@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     sync::{Mutex as AsyncMutex, oneshot},
 };
@@ -29,6 +29,162 @@ static SECRET_ENV: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|COOKIE|SESSION|AUTH|DEEPSEEK|OPENAI|ANTHROPIC|GITHUB|GH_|AWS_|AZURE_|ALIYUN|TENCENT").expect("constant regex")
 });
 type Reply = oneshot::Sender<std::result::Result<Value, String>>;
+
+struct Conversion {
+    child: Option<Child>,
+    stderr: Option<tokio::task::JoinHandle<std::io::Result<Vec<u8>>>>,
+    temporary: Option<PathBuf>,
+}
+
+impl Conversion {
+    fn spawn(mut command: Command, temporary: PathBuf) -> Result<Self> {
+        let mut conversion = Self {
+            child: None,
+            stderr: None,
+            temporary: Some(temporary),
+        };
+        let mut child = command
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("无法启动 dex2jar")?;
+        if let Some(mut stderr) = child.stderr.take() {
+            conversion.stderr = Some(tokio::spawn(async move {
+                let mut diagnostic = Vec::new();
+                let mut buffer = [0; 4096];
+                loop {
+                    let count = stderr.read(&mut buffer).await?;
+                    if count == 0 {
+                        return Ok(diagnostic);
+                    }
+                    diagnostic.extend_from_slice(&buffer[..count]);
+                    if diagnostic.len() > 8192 {
+                        diagnostic.drain(..diagnostic.len() - 8192);
+                    }
+                }
+            }));
+        }
+        conversion.child = Some(child);
+        Ok(conversion)
+    }
+
+    async fn wait(&mut self, cancel: &CancellationToken, timeout: Duration) -> Result<()> {
+        let result = async {
+            let child = self.child.as_mut().context("dex2jar 进程未启动")?;
+            let status = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(anyhow::anyhow!("请求已取消")),
+                result = tokio::time::timeout(timeout, child.wait()) => result.context("dex2jar 转换超时")??,
+            };
+            self.child.take();
+            let diagnostic = match self.stderr.as_mut() {
+                Some(stderr) => {
+                    let result = stderr.await;
+                    self.stderr.take();
+                    result.context("读取 dex2jar 诊断任务失败")??
+                }
+                None => Vec::new(),
+            };
+            if !status.success() {
+                bail!(
+                    "dex2jar 转换失败：{}",
+                    tail(&String::from_utf8_lossy(&diagnostic), 400)
+                );
+            }
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            self.cleanup().await?;
+        }
+        result
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        cleanup_conversion(&mut self.child, &mut self.stderr, &mut self.temporary).await
+    }
+}
+
+impl Drop for Conversion {
+    fn drop(&mut self) {
+        if self.child.is_none() && self.stderr.is_none() && self.temporary.is_none() {
+            return;
+        }
+        let mut child = self.child.take();
+        if let Some(child) = child.as_mut()
+            && let Err(error) = child.start_kill()
+        {
+            eprintln!("[spider] 取消 dex2jar 失败：{error}");
+        }
+        let mut stderr = self.stderr.take();
+        let mut temporary = self.temporary.take();
+        // The caller's runtime may be shutting down along with the dropped request.
+        std::thread::spawn(move || {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => {
+                    if let Err(error) = runtime.block_on(cleanup_conversion(
+                        &mut child,
+                        &mut stderr,
+                        &mut temporary,
+                    )) {
+                        eprintln!("[spider] 清理 dex2jar 失败：{error:#}");
+                    }
+                }
+                Err(error) => eprintln!("[spider] 启动 dex2jar 清理任务失败：{error}"),
+            }
+        });
+    }
+}
+
+async fn cleanup_conversion(
+    child: &mut Option<Child>,
+    stderr: &mut Option<tokio::task::JoinHandle<std::io::Result<Vec<u8>>>>,
+    temporary: &mut Option<PathBuf>,
+) -> Result<()> {
+    let mut failure = None;
+    if let Some(child) = child.as_mut() {
+        let kill = child.start_kill();
+        if let Err(error) = child.wait().await {
+            failure
+                .get_or_insert_with(|| anyhow::Error::new(error).context("等待 dex2jar 退出失败"));
+        }
+        if let Err(error) = kill {
+            failure.get_or_insert_with(|| anyhow::Error::new(error).context("终止 dex2jar 失败"));
+        }
+    }
+    child.take();
+    if let Some(stderr) = stderr.as_mut() {
+        match stderr.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                failure.get_or_insert_with(|| {
+                    anyhow::Error::new(error).context("读取 dex2jar 诊断失败")
+                });
+            }
+            Err(error) => {
+                failure.get_or_insert_with(|| {
+                    anyhow::Error::new(error).context("等待 dex2jar 诊断任务失败")
+                });
+            }
+        }
+    }
+    stderr.take();
+    if let Some(path) = temporary.as_ref()
+        && let Err(error) = tokio::fs::remove_file(path).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        failure
+            .get_or_insert_with(|| anyhow::Error::new(error).context("清理 dex2jar 临时文件失败"));
+    }
+    temporary.take();
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
 
 struct PendingRequest {
     session: Arc<Session>,
@@ -323,6 +479,43 @@ impl Spider {
         session.send(method, params, timeout, cancel).await
     }
 
+    async fn conversion_cache_path(
+        &self,
+        dir: &Path,
+        key: &str,
+        class: &str,
+        raw: &Path,
+    ) -> Result<PathBuf> {
+        let raw_digest = file_sha256(raw).await?;
+        let class_digest = format!("{:x}", md5::compute(class));
+        let mut candidate = dir.join(format!("{key}.{class_digest}.{raw_digest}.jar"));
+        loop {
+            if matches!(spider_archive(&candidate, class), Ok(ArchiveKind::Jvm)) {
+                return Ok(candidate);
+            }
+            if !candidate.is_file() {
+                return Ok(candidate);
+            }
+            if !has_jvm_classes(&candidate) {
+                tokio::fs::remove_file(&candidate)
+                    .await
+                    .context("清理无效 Spider 类缓存失败")?;
+                return Ok(candidate);
+            }
+            let old_name = candidate
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let mut digest = Sha256::new();
+            digest.update(old_name.as_bytes());
+            digest.update(file_sha256(&candidate).await?.as_bytes());
+            candidate = dir.join(format!(
+                "{key}.{class_digest}.{raw_digest}.{:x}.jar",
+                digest.finalize()
+            ));
+        }
+    }
+
     async fn prepare(
         &self,
         site: &Value,
@@ -345,37 +538,52 @@ impl Spider {
         tokio::fs::create_dir_all(&dir).await?;
         let output = dir.join(format!("{key}.jar"));
         let raw = dir.join(format!("{key}.raw.zip"));
-        if output.metadata().is_ok_and(|v| v.len() > 0) && raw.is_file() {
+        let class = s(site, "spiderClass");
+        let cached_raw = spider_archive(&raw, &class).ok();
+        if cached_raw.is_some() && matches!(spider_archive(&output, &class), Ok(ArchiveKind::Jvm)) {
             return Ok((output, raw));
         }
-        if raw.is_file() {
-            let bytes = tokio::fs::read(&raw).await?;
-            if looks_converted(&bytes) {
-                return Ok((raw.clone(), raw));
-            }
-        }
-        let bytes = if is_windows_path(&address) || address.starts_with('/') {
-            tokio::fs::read(&address)
+        if output.is_file() && !has_jvm_classes(&output) {
+            tokio::fs::remove_file(&output)
                 .await
-                .context("无法读取 Spider 文件")?
-        } else {
-            self.net
-                .get(
-                    address.split(";md5;").next().unwrap_or(&address),
-                    &json!({"User-Agent":"Mozilla/5.0"}),
-                    60.0,
-                    cancel,
-                )
-                .await?
-                .bytes
+                .context("清理无效 Spider 缓存失败")?;
+        }
+        let kind = match cached_raw {
+            Some(kind) => kind,
+            None => {
+                let bytes = if is_windows_path(&address) || address.starts_with('/') {
+                    tokio::fs::read(&address)
+                        .await
+                        .context("无法读取 Spider 文件")?
+                } else {
+                    self.net
+                        .get(
+                            address.split(";md5;").next().unwrap_or(&address),
+                            &json!({"User-Agent":"Mozilla/5.0"}),
+                            60.0,
+                            cancel,
+                        )
+                        .await?
+                        .bytes
+                };
+                let start = bytes
+                    .windows(4)
+                    .position(|v| v == b"PK\x03\x04")
+                    .context("spider 文件不是有效的 zip/dex")?;
+                tokio::fs::write(&raw, &bytes[start..]).await?;
+                spider_archive(&raw, &class)?
+            }
         };
-        let start = bytes
-            .windows(4)
-            .position(|v| v == b"PK\x03\x04")
-            .context("spider 文件不是有效的 zip/dex")?;
-        tokio::fs::write(&raw, &bytes[start..]).await?;
-        if looks_converted(&bytes[start..]) {
+        if kind == ArchiveKind::Jvm {
             return Ok((raw.clone(), raw));
+        }
+        let output = if has_jvm_classes(&output) {
+            self.conversion_cache_path(&dir, &key, &class, &raw).await?
+        } else {
+            output
+        };
+        if matches!(spider_archive(&output, &class), Ok(ArchiveKind::Jvm)) {
+            return Ok((output, raw));
         }
         let configured = std::env::var_os("SPIDER_DEX_TOOLS").map(PathBuf::from);
         let lib = configured
@@ -387,27 +595,34 @@ impl Spider {
             .map(|v| v.join("lib"))
             .find(|v| v.is_dir())
             .context("缺少 dex2jar，请运行 spider-host/fetch-tools.ps1")?;
-        let command = process(self.java())
+        let temporary = dir.join(format!("{key}.{}.partial.jar", uuid::Uuid::new_v4()));
+        let mut command = process(self.java());
+        command
             .arg("-cp")
             .arg(lib.join("*"))
             .arg("com.googlecode.dex2jar.tools.Dex2jarCmd")
             .arg("-f")
             .arg(&raw)
             .arg("-o")
-            .arg(&output)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output();
-        let result = tokio::select! { _ = cancel.cancelled() => bail!("请求已取消"), result = tokio::time::timeout(Duration::from_secs(90), command) => result.context("dex2jar 转换超时")?? };
-        if !result.status.success() || !output.is_file() {
-            if output.is_file() {
-                tokio::fs::remove_file(&output).await?;
+            .arg(&temporary);
+        let mut conversion = Conversion::spawn(command, temporary.clone())?;
+        let result = async {
+            conversion.wait(cancel, Duration::from_secs(90)).await?;
+            if spider_archive(&temporary, &class)? != ArchiveKind::Jvm {
+                bail!("dex2jar 转换结果没有 JVM 类");
             }
-            bail!(
-                "dex2jar 转换失败：{}",
-                tail(&String::from_utf8_lossy(&result.stderr), 400)
-            );
+            if cancel.is_cancelled() {
+                bail!("请求已取消");
+            }
+            tokio::fs::rename(&temporary, &output)
+                .await
+                .context("保存 Spider 转换缓存失败")?;
+            conversion.temporary.take();
+            Ok(())
         }
+        .await;
+        conversion.cleanup().await?;
+        result?;
         Ok((output, raw))
     }
 
@@ -521,11 +736,14 @@ impl Spider {
                 let path = if raw.is_file() { &raw } else { &jar };
                 let info = if path.is_file() {
                     let data = tokio::fs::read(path).await?;
-                    let size = [raw, jar]
-                        .iter()
-                        .filter_map(|v| v.metadata().ok())
-                        .map(|v| v.len())
-                        .sum::<u64>();
+                    let mut size = 0;
+                    let mut entries = tokio::fs::read_dir(&dir).await?;
+                    while let Some(entry) = entries.next_entry().await? {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with(&key) && entry.file_type().await?.is_file() {
+                            size += entry.metadata().await?.len();
+                        }
+                    }
                     json!({"cached":true,"bytes":size,"sha256":format!("{:x}", Sha256::digest(data))})
                 } else {
                     json!({"cached":false,"bytes":0})
@@ -560,6 +778,20 @@ impl Spider {
         }
         self.cache_info(sites).await
     }
+}
+
+async fn file_sha256(path: &Path) -> Result<String> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 impl Session {
@@ -660,8 +892,49 @@ pub fn cache_key(site: &Value) -> String {
         md5::compute(format!("{}|{}", s(site, "sourceId"), s(site, "jar")))
     )
 }
-fn looks_converted(bytes: &[u8]) -> bool {
-    !bytes.windows(11).any(|v| v == b"classes.dex") && bytes.windows(6).any(|v| v == b".class")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArchiveKind {
+    Jvm,
+    Dex,
+}
+
+fn has_jvm_classes(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return false;
+    };
+    (0..archive.len()).any(|index| {
+        archive.by_index_raw(index).is_ok_and(|entry| {
+            !entry.is_dir() && entry.name_raw().ends_with(b".class") && entry.size() >= 8
+        })
+    })
+}
+
+fn spider_archive(path: &Path, class: &str) -> Result<ArchiveKind> {
+    let file = std::fs::File::open(path).context("无法读取 Spider ZIP")?;
+    let mut archive = zip::ZipArchive::new(file).context("Spider 文件不是有效的 ZIP")?;
+    let target = format!("{}.class", class.replace('.', "/"));
+    if let Some(index) = archive.index_for_name(&target) {
+        let entry = archive.by_index_raw(index).context("Spider 类条目损坏")?;
+        if !entry.is_dir() && entry.size() >= 8 {
+            return Ok(ArchiveKind::Jvm);
+        }
+    }
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index).context("Spider ZIP 条目损坏")?;
+        let name = entry.name_raw();
+        if let Some(number) = name
+            .strip_prefix(b"classes")
+            .and_then(|name| name.strip_suffix(b".dex"))
+            && number.iter().all(u8::is_ascii_digit)
+            && entry.size() >= 8
+        {
+            return Ok(ArchiveKind::Dex);
+        }
+    }
+    bail!("Spider JAR 缺少目标类 {class}，且没有可转换的 DEX")
 }
 fn tail(text: &str, count: usize) -> String {
     text.chars()
@@ -696,7 +969,7 @@ pub fn parse_url(input: &str) -> Option<(String, String, String)> {
 pub fn classify_failure(message: &str) -> &'static str {
     static RULES: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
         [
-        (r"(?i)ClassNotFoundException|NoClassDefFoundError|Class not found|Could not find class", "missing_class"),
+        (r"(?i)ClassNotFoundException|NoClassDefFoundError|Class not found|Could not find class|Spider JAR 缺少目标类", "missing_class"),
         (r"(?i)not a Spider subclass", "wrong_type"), (r"(?i)UnsatisfiedLinkError|loadLibrary|native-lib|\.so\b", "native"),
         (r"(?i)NoSuchMethodError|Stub!|AbstractMethodError|NoSuchFieldError", "android_api"), (r"(?i)SSLHandshakeException|SSLException|PKIX|certificate|TLS", "tls"),
         (r"(?i)timeout|timed out|超时", "timeout"), (r"解析页|需要继续走解析", "parse_required"), (r"(?i)HTTP \d|请求失败|网络|fetch failed", "http"), (r"(?i)没有返回|为空|empty", "empty_search"),
@@ -712,6 +985,155 @@ pub fn classify_failure(message: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversion_child_fixture() {
+        let Some(path) = std::env::var_os("CRAYON_TEST_CONVERSION_OUTPUT") else {
+            return;
+        };
+        eprintln!("{}", "diagnostic".repeat(16384));
+        std::fs::write(path, b"partial conversion").unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    async fn conversion_fixture(folder: &Path) -> (Conversion, PathBuf, u32) {
+        let output = folder.join("conversion.partial.jar");
+        let mut command = process(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "spider::tests::conversion_child_fixture",
+                "--nocapture",
+            ])
+            .env("CRAYON_TEST_CONVERSION_OUTPUT", &output);
+        let conversion = Conversion::spawn(command, output.clone()).unwrap();
+        let pid = conversion.child.as_ref().unwrap().id().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !output.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("conversion fixture did not reach its partial output");
+        (conversion, output, pid)
+    }
+
+    async fn assert_conversion_cleaned(output: &Path, pid: u32) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while output.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("partial conversion output was not removed");
+        #[cfg(windows)]
+        {
+            let output = process("tasklist.exe")
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                .output()
+                .await
+                .unwrap();
+            assert!(output.status.success());
+            assert!(
+                !String::from_utf8_lossy(&output.stdout).contains(&format!(",\"{pid}\",")),
+                "conversion process {pid} is still running"
+            );
+        }
+        #[cfg(not(windows))]
+        assert!(
+            !process("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .await
+                .unwrap()
+                .success(),
+            "conversion process {pid} is still running"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_conversion_reaps_child_and_removes_partial_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut conversion, output, pid) = conversion_fixture(folder.path()).await;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = conversion
+            .wait(&cancel, Duration::from_secs(10))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("请求已取消"));
+        assert_conversion_cleaned(&output, pid).await;
+    }
+
+    #[tokio::test]
+    async fn timed_out_conversion_reaps_child_and_removes_partial_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut conversion, output, pid) = conversion_fixture(folder.path()).await;
+        let error = conversion
+            .wait(&CancellationToken::new(), Duration::from_millis(10))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("转换超时"));
+        assert_conversion_cleaned(&output, pid).await;
+    }
+
+    #[tokio::test]
+    async fn dropped_conversion_future_reaps_child_and_removes_partial_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut conversion, output, pid) = conversion_fixture(folder.path()).await;
+        let request = tokio::spawn(async move {
+            conversion
+                .wait(&CancellationToken::new(), Duration::from_secs(10))
+                .await
+        });
+        tokio::task::yield_now().await;
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        assert_conversion_cleaned(&output, pid).await;
+    }
+
+    #[tokio::test]
+    async fn dropped_conversion_cleanup_still_reaps_child_and_removes_partial_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let (mut conversion, output, pid) = conversion_fixture(folder.path()).await;
+        let mut cleanup = Box::pin(async move { conversion.cleanup().await });
+        assert!(futures_util::poll!(&mut cleanup).is_pending());
+        drop(cleanup);
+        assert_conversion_cleaned(&output, pid).await;
+    }
+
+    #[test]
+    fn shutting_down_conversion_runtime_still_reaps_child_and_removes_partial_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (output, pid) = runtime.block_on(async {
+            let (conversion, output, pid) = conversion_fixture(folder.path()).await;
+            tokio::spawn(async move {
+                let _conversion = conversion;
+                std::future::pending::<()>().await;
+            });
+            (output, pid)
+        });
+        drop(runtime);
+        let verification = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        verification.block_on(assert_conversion_cleaned(&output, pid));
+    }
+
+    #[test]
+    fn absent_spider_class_is_classified_as_missing_class() {
+        assert_eq!(
+            classify_failure(
+                "Spider JAR 缺少目标类 com.github.catvod.spider.AppRJ，且没有可转换的 DEX"
+            ),
+            "missing_class"
+        );
+    }
 
     #[tokio::test]
     async fn dropping_request_releases_host_pending_slot() {
