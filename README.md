@@ -8,7 +8,7 @@ Windows 影视聚合客户端，支持 TVBox 配置订阅。v0.1.7 起，桌面�
 
 | 项目 | 当前版本 |
 |---|---|
-| 版本 | **0.1.9 · Rust 桌面版**，正式下载以 [Release](https://github.com/byqianye/crayon-shin-chan/releases/tag/v0.1.9) 为准 |
+| 版本 | **0.1.10 · Rust 桌面版**，正式下载以 [v0.1.10 Release](https://github.com/byqianye/crayon-shin-chan/releases/tag/v0.1.10) 为准 |
 | 平台 | Windows x64，需要 Microsoft Edge WebView2 Runtime |
 | 界面与业务 | Rust、Dioxus；复用原版 CSS |
 | 媒体与 Spider | ArtPlayer、hls.js、mpegts.js、Shaka；随包提供 Java 宿主、JRE、dex2jar 与 unidbg 桥 |
@@ -19,7 +19,7 @@ Windows 影视聚合客户端，支持 TVBox 配置订阅。v0.1.7 起，桌面�
 
 上图是原版历史截图，展示样式与功能布局，不代表当前源站可用性。迁移说明与实测边界见 [Rust 文档](native-rust/README.md)，完整历史见 [CHANGELOG](CHANGELOG.md)，配置规范见 [功能框架](功能框架.txt)。
 
-v0.1.9 加入媒体诊断、mpv 进度与续播联动、FLV/TS/DASH 播放适配。继续保留 v0.1.8 的首页与分类逐步加载；实现说明与本机验收边界见 [Rust 文档](native-rust/README.md)。
+v0.1.10 增加看看鸭与 Animoe 的原生网站源适配，并保留 v0.1.9 的媒体诊断、mpv 进度与续播联动、FLV/TS/DASH 播放适配，以及 v0.1.8 的首页与分类逐步加载。网站源的使用方式和实测边界见下文及 [Rust 文档](native-rust/README.md)。
 
 ## 下载安装
 
@@ -27,15 +27,15 @@ v0.1.9 加入媒体诊断、mpv 进度与续播联动、FLV/TS/DASH 播放适配
 
 | 文件 | 用途 |
 |---|---|
-| CrayonShinChan-0.1.9-rust-x64.exe | NSIS 安装版，创建桌面和开始菜单快捷方式，提供卸载入口 |
-| CrayonShinChan-0.1.9-rust-x64.zip | 免安装版，解压后运行 crayon-rust.exe |
+| CrayonShinChan-0.1.10-rust-x64.exe | NSIS 安装版，创建桌面和开始菜单快捷方式，提供卸载入口 |
+| CrayonShinChan-0.1.10-rust-x64.zip | 免安装版，解压后运行 crayon-rust.exe |
 | SHA256SUMS-rust.txt | 安装包与 ZIP 的 SHA256 校验值 |
 
 默认安装目录为 %LOCALAPPDATA%\Programs\crayon-shin-chan-rust。安装向导允许更改位置；请选择当前用户可写的目录。运行时不需要 Rust、Node.js 或另外安装 Java；Microsoft Edge WebView2 Runtime 由系统提供，缺失时请从 [Microsoft 官网](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。
 
 GNU 构建必须让 WebView2Loader.dll 与 crayon-rust.exe 保持同级。免安装包请完整解压，保留 spider-host/、licenses/ 等目录。安装包中的 version.json 标识实际版本与运行环境，FILES.sha256 可核对解包后的文件。
 
-程序尚未进行代码签名，Windows 可能显示发布者未知提示。v0.1.9 只发布 Rust 完整版；旧 Electron 完整版和精简版仍可从对应历史 Release 下载。
+程序尚未进行代码签名，Windows 可能显示发布者未知提示。v0.1.10 发布目标为 Rust 完整版；旧 Electron 完整版和精简版仍可从对应历史 Release 下载。
 
 ## 从 Electron 版迁移
 
@@ -52,6 +52,7 @@ GNU 构建必须让 WebView2Loader.dll 与 crayon-rust.exe 保持同级。免安
 
 - 配置订阅、本地 JSON、手动站点、多仓导入、同步、启停、筛选、测试、审计和忽略记录。
 - CMS XML/JSON、网页规则、HTTP JSON 与 Java Spider；订阅中相对地址、请求头规则、解析接口和首页内容位。
+- 看看鸭与 Animoe 原生网站源：复用项目 HTTP 客户端、分类/搜索/详情流程和播放器；详情与播放地址按需解析。
 - 流式聚合搜索、有界并发、请求取消、影片合并、解说过滤、分类浏览与分页。
 - 详情、选集、多线路、网页播放地址提取、解析接口排行、内嵌播放与外部播放器检测。
 - 直播 M3U/TXT、多线路合并与失败换线；收藏、观看历史、首页继续观看。
@@ -63,6 +64,16 @@ GNU 构建必须让 WebView2Loader.dll 与 crayon-rust.exe 保持同级。免安
 首次启动会添加内置公开采集订阅和肥猫订阅并尝试同步。同步失败保留上次缓存；删除或停用后不自动恢复。第三方 Spider 默认关闭，需确认来源后在「影视源」页启用。包中不包含用户的设置、API Key、收藏或观看记录。
 
 本版包含按需媒体诊断、mpv 进度与续播联动、FLV/TS/DASH 适配。媒体探测成功表示识别和连通性，实际播放仍取决于编码与 WebView2 能力；能力与验收边界见 [Rust 文档](native-rust/README.md#媒体诊断与播放联动v019)。
+
+## 看看鸭与 Animoe 网站源
+
+Rust 版提供可选的「看看鸭与 Animoe」内置推荐订阅。首次启动不会自动添加这两个站点；在「设置 → 内置推荐订阅」点选添加，或导入 [website-sources.json](samples/website-sources.json)。这份配置需要包含原生网站适配器的程序版本；旧 Electron 版不支持这两个站点的专用协议，现有订阅不会被替换。
+
+适配器不启动 Java Spider 或浏览器，复用应用 HTTP 连接池和现有首页、分类、搜索、详情缓存。分类、搜索、分集、多线路进入原有详情页与播放器；看看鸭的播放页和前台检查使用短期内存会话，媒体地址按需解析，避免列表阶段逐部访问播放页。请求支持取消和总时限；媒体响应会检查内容签名，验证页或伪装成视频的 HTTP 200 错误页不会被当作有效影片或媒体。分页有跳转上限，跨站播放地址会被拒绝，源站凭据不会转发给外域媒体主机。
+
+**既有现网观察（2026-11-28）**：看看鸭首页曾返回 24 部作品、4 个分类；“庆余年”搜索约 0.23–0.55 秒、详情约 0.28–0.33 秒、重复详情约 2 毫秒。另一部最近更新作品的一条 HLS 线路通过了媒体内容签名检查。此前“庆余年”前四条线路返回 403/404，其中一条上游响应含已过期约 16 分钟的签名。以上是当日样本和媒体识别结果，不等于播放器已出画，也不代表当前源站可用性。
+
+Animoe 适配了公开页面与 API 规则；上述日期实时访问遇到 Cloudflare 安全验证拦截，未完成该站真实播放验收。非标准 `enc` 播放清单明确报不支持。站点页面、验证策略、签名地址与可用线路均可能变化；请在应用内测试来源，不能把规则解析成功或媒体识别成功视为解码/播放成功。
 
 ## Spider 与支持边界
 
@@ -93,7 +104,8 @@ Spider jar 是第三方可执行代码。JVM 会过滤敏感环境变量并使�
 |---|---|
 | pnpm dev | 编译并启动 Rust 桌面版 |
 | pnpm build:rust | 编译 Rust release，GNU 版同时复制 WebView2 加载器 |
-| pnpm build:win / pnpm package:rust | 生成 Rust 完整版安装包、ZIP、许可与 SHA256 清单 |
+| pnpm package:rust | 构建并生成 Rust 完整版安装包、ZIP、许可与 SHA256 清单 |
+| pnpm build:win | `pnpm package:rust` 的兼容别名 |
 | cargo test --locked --manifest-path native-rust/Cargo.toml --tests | Rust 契约回归，包含真实 Java 宿主 |
 | node scripts/player-bridge-contract.mjs | HLS、FLV/TS、DASH 适配与资源释放契约 |
 | cargo test --locked --manifest-path native-rust/Cargo.toml --no-default-features | 无桌面功能的核心服务回归 |
@@ -102,7 +114,7 @@ Spider jar 是第三方可执行代码。JVM 会过滤敏感环境变量并使�
 | pnpm typecheck / pnpm build | 原 Electron 实现的类型检查与生产构建 |
 | node scripts/ci-selftest.mjs | 原 Electron 窗口对照自检，使用隔离数据 |
 | pnpm dev:electron | 启动原 Electron 开发版 |
-| pnpm build:win:electron / pnpm build:win:lite | 旧 Electron 打包命令，非 v0.1.9 发布入口 |
+| pnpm build:win:electron / pnpm build:win:lite | 旧 Electron 打包命令，不用于 v0.1.10 发布 |
 | pnpm icon:check | 检查应用图标同步 |
 
 Rust 包生成在 release/rust/。原 src/ 保留作功能、样式与数据契约对照；原版测试通过不等于 Rust 窗口测试通过。构建输出与依赖缓存不提交到 Git。
@@ -111,7 +123,7 @@ Rust 包生成在 release/rust/。原 src/ 保留作功能、样式与数据契�
 
 CI 保留原 TypeScript / Electron 对照检查，并增加 Rust fmt、check、严格 Clippy、两种功能配置的测试与 release 构建。发布工作流检查版本、图标、服务回归、Spider 契约、Electron 对照窗口及 Rust 实现，然后仅上传 Rust 包和对应 SHA256 清单。
 
-v* 标签触发的自动流程只创建草稿，拒绝覆盖已有正式 Release；确认构建和安装验收后再发布。安装包和 ZIP 是 Release 资产，不提交进 Git。
+v* 标签触发的自动流程只创建草稿，拒绝覆盖已有正式 Release；确认构建和安装验收后再发布。v0.1.10 的预期资产为安装包、免安装 ZIP、SHA256SUMS-rust.txt 和发布说明；以实际 Release 页面为准。安装包和 ZIP 是 Release 资产，不提交进 Git。
 
 ## 目录与许可
 

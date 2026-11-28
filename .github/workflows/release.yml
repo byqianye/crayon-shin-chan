@@ -8,7 +8,7 @@ on:
       version:
         description: Rust release version without the v prefix
         required: true
-        default: 0.1.9
+        default: 0.1.10
 
 concurrency:
   group: release-${{ github.ref }}
