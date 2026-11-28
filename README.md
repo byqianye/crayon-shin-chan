@@ -123,7 +123,7 @@ Rust 包生成在 release/rust/。原 src/ 保留作功能、样式与数据契�
 
 CI 保留原 TypeScript / Electron 对照检查，并增加 Rust fmt、check、严格 Clippy、两种功能配置的测试与 release 构建。发布工作流检查版本、图标、服务回归、Spider 契约、Electron 对照窗口及 Rust 实现，然后仅上传 Rust 包和对应 SHA256 清单。
 
-v* 标签触发的自动流程只创建草稿，拒绝覆盖已有正式 Release；确认构建和安装验收后再发布。v0.1.10 的预期资产为安装包、免安装 ZIP、SHA256SUMS-rust.txt 和发布说明；以实际 Release 页面为准。安装包和 ZIP 是 Release 资产，不提交进 Git。
+v* 标签触发的自动流程只创建草稿，拒绝覆盖已有正式 Release；确认构建和安装验收后再发布。v0.1.10 提供三个下载资产：安装包、免安装 ZIP、SHA256SUMS-rust.txt；发布说明显示在 Release 页面正文。以实际 Release 页面为准，安装包和 ZIP 不提交进 Git。
 
 ## 目录与许可
 
