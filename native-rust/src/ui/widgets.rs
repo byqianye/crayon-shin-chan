@@ -200,7 +200,7 @@ pub(super) fn FirstRun() -> Element {
 pub(super) fn PresetRows() -> Element {
     let ui = use_context::<Ui>();
     let mut busy = use_signal(String::new);
-    rsx! {for preset in crate::presets::list(){{let id=s(&preset,"id");rsx!{div{class:"preset-row",div{class:"grow",div{class:"list-row-title",{s(&preset,"name")}}div{class:"list-row-sub",{s(&preset,"desc")}}}span{class:"tag tag-outline",if preset["remote"]==true{"远程配置"}else{"5 个站点 · 1 个直播源"}}button{class:"btn btn-sm btn-primary",disabled:!busy.read().is_empty(),onclick:move|_|{let id=id.clone();busy.set(id.clone());spawn(async move{let svc=ui.backend();if let Some(source)=ui.report(crate::presets::add(&svc.sources,&id)){ui.refresh();ui.report(svc.sources.sync(&s(&source,"id")).await);ui.refresh();}busy.set(String::new());});},if !busy.read().is_empty(){span{class:"spin"}}else{Icon{name:"plus",size:13}}"添加"}}}}}}
+    rsx! {for preset in crate::presets::list(){{let id=s(&preset,"id");rsx!{div{class:"preset-row",div{class:"grow",div{class:"list-row-title",{s(&preset,"name")}}div{class:"list-row-sub",{s(&preset,"desc")}}}span{class:"tag tag-outline",if preset["remote"]==true{"远程配置"}else{{format!("{} 个站点 · {} 个直播源",s(&preset,"siteCount"),s(&preset,"liveCount"))}}}button{class:"btn btn-sm btn-primary",disabled:!busy.read().is_empty(),onclick:move|_|{let id=id.clone();busy.set(id.clone());spawn(async move{let svc=ui.backend();if let Some(source)=ui.report(crate::presets::add(&svc.sources,&id)){ui.refresh();ui.report(svc.sources.sync(&s(&source,"id")).await);ui.refresh();}busy.set(String::new());});},if !busy.read().is_empty(){span{class:"spin"}}else{Icon{name:"plus",size:13}}"添加"}}}}}}
 }
 #[component]
 pub(super) fn Toasts() -> Element {
