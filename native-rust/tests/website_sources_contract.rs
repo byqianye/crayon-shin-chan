@@ -1,6 +1,29 @@
 use crayon_core::{catalogue::Catalogue, model::s, presets, sources::Sources, storage::Store};
 use serde_json::json;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+#[test]
+fn website_dispatch_futures_fit_nested_catalogue_calls() {
+    let folder = tempfile::tempdir().unwrap();
+    let sources = Sources::new(Arc::new(Store::open(folder.path()).unwrap())).unwrap();
+    let cancel = CancellationToken::new();
+    let query = json!({"ac":"list"});
+    for api in ["https://www.kankanya.pro/", "https://animoe.org/"] {
+        let site = json!({"api":api});
+        let request = crayon_core::websites::request(&sources, &site, &query, &cancel);
+        let resolve = crayon_core::websites::resolve(&sources, &site, api, &cancel);
+        for (name, size) in [
+            ("request", std::mem::size_of_val(&request)),
+            ("resolve", std::mem::size_of_val(&resolve)),
+        ] {
+            assert!(
+                size < 16 * 1024,
+                "{api} {name} future inline size is {size} bytes"
+            );
+        }
+    }
+}
 
 #[test]
 fn website_dispatch_requires_exact_hosts_and_root_apis() {

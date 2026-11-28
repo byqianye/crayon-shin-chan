@@ -92,10 +92,11 @@ pub async fn request(
     cancel: &CancellationToken,
 ) -> Result<Value> {
     let adapter = website(site).context("没有匹配的原生网站适配器")?;
+    // 避免适配器的多阶段 HTTP future 在目录缓存的嵌套调用中放大栈占用。
     let operation = async {
         match adapter {
-            Website::Kankanya => kankanya::request(sources, site, query, cancel).await,
-            Website::Animoe => animoe::request(sources, site, query, cancel).await,
+            Website::Kankanya => Box::pin(kankanya::request(sources, site, query, cancel)).await,
+            Website::Animoe => Box::pin(animoe::request(sources, site, query, cancel)).await,
         }
     };
     tokio::select! {
@@ -119,8 +120,8 @@ pub async fn resolve(
     let adapter = website(site).context("没有匹配的原生网站适配器")?;
     let operation = async {
         match adapter {
-            Website::Kankanya => kankanya::resolve(sources, site, address, cancel).await,
-            Website::Animoe => animoe::resolve(sources, site, address, cancel).await,
+            Website::Kankanya => Box::pin(kankanya::resolve(sources, site, address, cancel)).await,
+            Website::Animoe => Box::pin(animoe::resolve(sources, site, address, cancel)).await,
         }
     };
     tokio::select! {
