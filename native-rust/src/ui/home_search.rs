@@ -37,7 +37,7 @@ pub(super) fn Home() -> Element {
             }
         }
     });
-    let content = sections.read().clone();
+    let content = visible_home_sections(sections.read().clone());
     let sites = ui.sites.read().clone();
     let sources = ui.sources.read().clone();
     let history = array(&ui.library.read()["history"]);
@@ -98,6 +98,18 @@ pub(super) fn Home() -> Element {
         }
     }
 }
+
+fn visible_home_sections(sections: Vec<Value>) -> Vec<Value> {
+    sections
+        .into_iter()
+        .filter(|section| {
+            section["loading"] != true
+                || !array(&section["items"]).is_empty()
+                || !s(section, "error").is_empty()
+        })
+        .collect()
+}
+
 #[component]
 fn Milestones() -> Element {
     rsx! {div {class:"section",div {class:"section-head",div {class:"section-title","开发里程碑"}div {class:"section-more","详见项目根目录「功能框架.txt」"}}
@@ -428,4 +440,36 @@ fn BrowseMore(state: BrowseState) -> Element {
         else if *state.page.read()<*state.pages.read() {button {class:"btn",onclick:move |_|state.load(ui,state.bucket.peek().clone(),state.sub.peek().clone(),*state.page.peek()+1),"加载更多 · 第 {state.page} / {state.pages} 页"}}
         else {span {class:"text-3 fs-13","已经到底了 · 共 {state.page} 页"}}
     }}
+}
+
+#[cfg(test)]
+mod home_loading_tests {
+    use super::visible_home_sections;
+    use serde_json::json;
+
+    #[test]
+    fn home_does_not_render_source_names_until_their_result_arrives() {
+        let pending = json!({
+            "key": "slow::latest",
+            "title": "慢源 · 最近更新",
+            "items": [],
+            "loading": true
+        });
+        let ready = json!({
+            "key": "fast::latest",
+            "title": "快源 · 最近更新",
+            "items": [{"vod_id": "fast-1"}]
+        });
+        let empty = json!({
+            "key": "empty::latest",
+            "title": "空源 · 最近更新",
+            "items": [],
+            "error": "这一个内容位没有返回数据"
+        });
+
+        assert_eq!(
+            visible_home_sections(vec![pending, ready.clone(), empty.clone()]),
+            vec![ready, empty]
+        );
+    }
 }

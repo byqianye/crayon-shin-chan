@@ -45,6 +45,7 @@ enum Page {
     Settings,
     Detail(String, String),
     Player(String, String, usize, usize),
+    PlayerByEpisodeName(String, String, usize, String),
 }
 #[derive(Clone, Copy)]
 struct Ui {
@@ -113,10 +114,13 @@ impl Ui {
         }
     }
     fn go(mut self, page: Page) {
-        if matches!(page, Page::Detail(_, _) | Page::Player(_, _, _, _))
+        if matches!(
+            page,
+            Page::Detail(_, _) | Page::Player(_, _, _, _) | Page::PlayerByEpisodeName(_, _, _, _)
+        )
             && !matches!(
                 *self.page.peek(),
-                Page::Detail(_, _) | Page::Player(_, _, _, _)
+                Page::Detail(_, _) | Page::Player(_, _, _, _) | Page::PlayerByEpisodeName(_, _, _, _)
             )
         {
             self.origin.set(self.page.peek().clone());
@@ -270,7 +274,7 @@ fn App() -> Element {
         nav{class:"sidebar-nav",for (target,label,icon,count) in [(Page::Home,"首页","home",0),(Page::Browse,"分类浏览","grid",0),(Page::Live,"电视直播","live",0),(Page::Library,"收藏与历史","star",0),(Page::Sites,"影视源","layers",enabled),(Page::Settings,"设置","settings",ui.sources.read().len())]{
             a{href:"#",class:if target==page||(target==Page::Browse&&matches!(page,Page::Search(_))){"nav-item active"}else{"nav-item"},title:label,onclick:move|e|{e.prevent_default();ui.go(target.clone());},span{class:"nav-icon",Icon{name:icon}}span{class:"nav-label","{label}"}if count>0{span{class:"nav-count","{count}"}}}
         }}div{class:"sidebar-foot",button{r#type:"button",class:"nav-item",title:if collapsed{"展开侧栏"}else{"收起侧栏"},onclick:move|_|ui.patch(json!({"sidebarCollapsed":!collapsed})),span{class:"nav-icon",Icon{name:if collapsed{"chevron-right"}else{"chevron-left"}}}span{class:"nav-label","收起侧栏"}}}}
-        div{class:"app-main",Topbar{}main{class:"app-content",match page{Page::Home=>rsx!{if ui.sources.read().is_empty(){FirstRun{}}else{Home{}}},Page::Browse=>rsx!{Search{key:"{Page::Browse:?}",keyword:String::new()}},Page::Search(wd)=>rsx!{Search{key:"search-{wd}",keyword:wd}},Page::Live=>rsx!{LivePage{}},Page::Library=>rsx!{Library{}},Page::Sites=>rsx!{Sites{}},Page::Settings=>rsx!{Settings{}},Page::Detail(key,id)=>rsx!{Detail{key:"detail-{key}-{id}",site_key:key,vod_id:id}},Page::Player(key,id,line,ep)=>rsx!{Player{key:"play-{key}-{id}-{line}-{ep}",site_key:key,vod_id:id,line_index:line,ep_index:ep}}}}}
+        div{class:"app-main",Topbar{}main{class:"app-content",match page{Page::Home=>rsx!{if ui.sources.read().is_empty(){FirstRun{}}else{Home{}}},Page::Browse=>rsx!{Search{key:"{Page::Browse:?}",keyword:String::new()}},Page::Search(wd)=>rsx!{Search{key:"search-{wd}",keyword:wd}},Page::Live=>rsx!{LivePage{}},Page::Library=>rsx!{Library{}},Page::Sites=>rsx!{Sites{}},Page::Settings=>rsx!{Settings{}},Page::Detail(key,id)=>rsx!{Detail{key:"detail-{key}-{id}",site_key:key,vod_id:id}},Page::Player(key,id,line,ep)=>rsx!{Player{key:"play-{key}-{id}-{line}-{ep}",site_key:key,vod_id:id,line_index:line,ep_index:ep,episode_name:None}},Page::PlayerByEpisodeName(key,id,ep,name)=>rsx!{Player{key:"play-{key}-{id}-source-{ep}",site_key:key,vod_id:id,line_index:0,ep_index:ep,episode_name:Some(name)}}}}}
         Toasts{}
     }}
 }

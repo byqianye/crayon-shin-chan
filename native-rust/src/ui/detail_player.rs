@@ -45,6 +45,51 @@ fn default_line(detail: &Value) -> usize {
         .unwrap_or(0)
 }
 
+fn normalize_episode_name(name: &str) -> String {
+    name.chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn episode_index_for_source(
+    current_name: &str,
+    fallback_index: usize,
+    target_episodes: &[Value],
+) -> usize {
+    let current_name = normalize_episode_name(current_name);
+    if !current_name.is_empty()
+        && let Some(index) = target_episodes
+            .iter()
+            .position(|episode| normalize_episode_name(&s(episode, "name")) == current_name)
+    {
+        return index;
+    }
+    fallback_index.min(target_episodes.len().saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::episode_index_for_source;
+    use serde_json::json;
+
+    #[test]
+    fn source_switch_finds_the_same_episode_by_name() {
+        let episodes = vec![json!({"name":"第 1 集"}), json!({"name":"第 3 集"})];
+
+        assert_eq!(episode_index_for_source("第3集", 0, &episodes), 1);
+    }
+
+    #[test]
+    fn source_switch_clamps_the_fallback_to_available_episodes() {
+        let episodes = vec![json!({"name":"第 1 集"}), json!({"name":"第 2 集"})];
+
+        assert_eq!(episode_index_for_source("未收录", 1, &episodes), 1);
+        assert_eq!(episode_index_for_source("未收录", 9, &episodes), 1);
+        assert_eq!(episode_index_for_source("未收录", 9, &[]), 0);
+    }
+}
+
 #[component]
 pub(super) fn Detail(site_key: String, vod_id: String) -> Element {
     let ui = use_context::<Ui>();
@@ -98,17 +143,29 @@ pub(super) fn Detail(site_key: String, vod_id: String) -> Element {
             div{class:"detail-hero",div{class:"poster-detail",Poster{src:s(&data,"vod_pic"),name:s(&data,"vod_name")}}div{class:"detail-info",h1{class:"detail-title",{s(&data,"vod_name")}}div{class:"detail-meta",if number(&data["vod_score"],0.0)>0.0{span{class:"detail-score",{s(&data,"vod_score")}}}for value in [s(&data,"type_name"),s(&data,"vod_year"),s(&data,"vod_area"),s(&data,"vod_lang"),s(&data,"vod_remarks")].into_iter().filter(|v|!v.is_empty()){span{class:"tag tag-outline","{value}"}}}div{class:"detail-crew",for (key,label) in [("vod_director","导演"),("vod_actor","主演")]{if !s(&data,key).is_empty(){div{span{class:"text-3","{label} "}{s(&data,key)}}}}if !s(&data,"vod_content").is_empty(){div{class:if *desc_open.read(){"detail-desc open"}else{"detail-desc"},{s(&data,"vod_content")}button{class:"detail-desc-toggle",onclick:move|_|desc_open.toggle(),if *desc_open.read(){"收起"}else{"展开"}}}}}
                 if !loaded{div{class:"detail-pending",span{class:"spin"}"正在获取线路与剧集…"}}else if !lines.is_empty(){div{class:"detail-actions",button{class:"btn btn-primary",onclick:move|_|ui.go(Page::Player(s(&detail_for_play,"siteKey"),s(&detail_for_play,"vod_id"),*line.peek(),0)),Icon{name:"play",size:15}"立即播放"}button{class:"btn",onclick:move|_|{ui.report(ui.backend().store.toggle_favorite(favorite(&detail_for_favorite)));ui.refresh();},Icon{name:"star",size:15}if favorited{"已收藏"}else{"收藏"}}span{class:"text-3 fs-12","共 {lines.len()} 条线路，{count} 个剧集"}}}else{div{class:"banner banner-warn","这个站点没有返回可播放的剧集地址，换一个来源试试。"}}
             }}
-            if alternatives.len()>1{div{class:"section",id:"source-picker",div{class:"section-head",div{class:"section-title","选择片源"}span{class:"text-3 fs-12","同一部影片在 {alternatives.len()} 个站点上都有"}}div{class:"source-list",for source in alternatives{SourceItem{key:"{vod_key(&source)}",source,current_key:site_key.clone(),current_id:vod_id.clone(),playing:false}}}}}
+            if alternatives.len()>1{div{class:"section",id:"source-picker",div{class:"section-head",div{class:"section-title","选择片源"}span{class:"text-3 fs-12","同一部影片在 {alternatives.len()} 个站点上都有"}}div{class:"source-list",for source in alternatives{SourceItem{key:"{vod_key(&source)}",source,current_key:site_key.clone(),current_id:vod_id.clone(),playing:false,episode_name:String::new(),episode_index:0}}}}}
             if loaded&&!lines.is_empty(){div{class:"section",div{class:"section-head",div{class:"section-title","选集"}button{class:"btn btn-sm",onclick:move|_|reversed.toggle(),Icon{name:"filter",size:13}if *reversed.read(){"正序"}else{"倒序"}}}div{class:"chips",for (index,item) in lines.iter().enumerate(){button{class:if index==*line.read(){"chip active"}else{"chip"},onclick:move|_|line.set(index),{s(item,"name")}span{class:"chip-count",{array(&item["episodes"]).len().to_string()}}}}}div{class:"episode-grid",for (index,episode) in episodes.iter().enumerate().collect::<Vec<_>>().into_iter().rev().filter(|_|*reversed.read()).chain(episodes.iter().enumerate().filter(|_|!*reversed.read())){EpisodeButton{key:"{index}",episode:episode.clone(),page:Page::Player(site_key.clone(),vod_id.clone(),*line.read(),index),active:false}}}}}
         }
     }}
 }
 #[component]
-fn SourceItem(source: Value, current_key: String, current_id: String, playing: bool) -> Element {
+fn SourceItem(
+    source: Value,
+    current_key: String,
+    current_id: String,
+    playing: bool,
+    episode_name: String,
+    episode_index: usize,
+) -> Element {
     let ui = use_context::<Ui>();
     let active = s(&source, "siteKey") == current_key && s(&source, "vod_id") == current_id;
     let target = if playing {
-        Page::Player(s(&source, "siteKey"), s(&source, "vod_id"), 0, 0)
+        Page::PlayerByEpisodeName(
+            s(&source, "siteKey"),
+            s(&source, "vod_id"),
+            episode_index,
+            episode_name,
+        )
     } else {
         Page::Detail(s(&source, "siteKey"), s(&source, "vod_id"))
     };
@@ -125,12 +182,14 @@ pub(super) fn Player(
     vod_id: String,
     line_index: usize,
     ep_index: usize,
+    episode_name: Option<String>,
 ) -> Element {
     let ui = use_context::<Ui>();
-    let episode_key = format!("{site_key}:{vod_id}:{line_index}:{ep_index}");
+    let detail_site_key = site_key.clone();
+    let detail_vod_id = vod_id.clone();
     let detail = use_resource(move || {
-        let key = site_key.clone();
-        let id = vod_id.clone();
+        let key = detail_site_key.clone();
+        let id = detail_vod_id.clone();
         async move {
             ui.backend()
                 .catalogue
@@ -144,6 +203,17 @@ pub(super) fn Player(
         None => rsx! {div{class:"page",Loading{text:"正在加载影片信息…"}}},
         Some(Err(error)) => rsx! {div{class:"page",Empty{title:"无法加载影片",desc:error}}},
         Some(Ok(detail)) => {
+            let (line_index, ep_index) = if let Some(episode_name) = episode_name {
+                let line_index = default_line(&detail);
+                let episodes = array(&detail["lines"][line_index]["episodes"]);
+                (
+                    line_index,
+                    episode_index_for_source(&episode_name, ep_index, &episodes),
+                )
+            } else {
+                (line_index, ep_index)
+            };
+            let episode_key = format!("{site_key}:{vod_id}:{line_index}:{ep_index}");
             rsx! {EpisodePlayer{key:"{episode_key}",detail,line_index,ep_index}}
         }
     }
@@ -229,7 +299,7 @@ fn EpisodePlayer(detail: Value, line_index: usize, ep_index: usize) -> Element {
             button{class:"player-url mono",title:browser.clone(),onclick:move|_|{ui.report(opener::open(&browser).map_err(anyhow::Error::from));},span{class:"player-url-text","{raw}"}span{class:"player-url-go",Icon{name:"external",size:12}"浏览器打开"}}
             AiSummary{input}
         }aside{class:"player-side",div{class:"player-side-head",Poster{src:s(&detail,"vod_pic"),name:s(&detail,"vod_name"),class:"poster-side"}div{div{class:"player-side-title",{s(&detail,"vod_name")}}div{class:"text-3 fs-12",{s(&line,"name")}}div{class:"text-3 fs-12","第 {ep_index+1} / {episodes.len()} 集"}}}
-            div{class:"player-sources",div{class:"player-side-label","片源"}div{class:"source-chips",for source in alternatives{SourceItem{source,current_key:s(&detail,"siteKey"),current_id:s(&detail,"vod_id"),playing:true}}}button{class:"btn btn-sm",onclick:move|_|{let name=s(&detail,"vod_name");spawn(async move{let svc=ui.backend();if let Some(result)=ui.report(svc.catalogue.search(&name,json!({}),None).await){ui.results.set(array(&result["results"]));}});},Icon{name:"search",size:13}"找其它片源"}}
+            div{class:"player-sources",div{class:"player-side-label","片源"}div{class:"source-chips",for source in alternatives{SourceItem{source,current_key:s(&detail,"siteKey"),current_id:s(&detail,"vod_id"),playing:true,episode_name:s(&episode,"name"),episode_index:ep_index}}}button{class:"btn btn-sm",onclick:move|_|{let name=s(&detail,"vod_name");spawn(async move{let svc=ui.backend();if let Some(result)=ui.report(svc.catalogue.search(&name,json!({}),None).await){ui.results.set(array(&result["results"]));}});},Icon{name:"search",size:13}"找其它片源"}}
             div{class:"chips",for (index,item) in array(&detail["lines"]).iter().enumerate(){EpisodeButton{episode:item.clone(),page:Page::Player(s(&detail,"siteKey"),s(&detail,"vod_id"),index,ep_index.min(array(&item["episodes"]).len().saturating_sub(1))),active:index==line_index}}}div{class:"player-episodes",for (index,episode) in episodes.iter().cloned().enumerate(){EpisodeButton{episode,page:Page::Player(s(&detail,"siteKey"),s(&detail,"vod_id"),line_index,index),active:index==ep_index}}}
         }}
     }}
